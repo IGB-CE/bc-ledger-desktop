@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BC Ledger Desktop</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="./renderer.js" defer></script>
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">Business Central 4092</p>
+          <h1>Ledger Search Desktop</h1>
+          <p class="hero-text">
+            Search by client name, or run the date-based account view and inspect the matched rows without leaving the desktop app.
+          </p>
+        </div>
+        <div class="hero-note">
+          <span>Current scope</span>
+          <strong>G/L account 4092</strong>
+        </div>
+      </header>
+
+      <main class="layout">
+        <section class="panel controls-panel">
+          <div class="panel-header">
+            <h2>Run Report</h2>
+            <p>Use client search, or leave it blank and provide both dates.</p>
+          </div>
+
+          <form id="report-form" class="report-form">
+            <label>
+              <span>Client</span>
+              <input id="client" name="client" type="text" placeholder="PANTEON" />
+            </label>
+
+            <label>
+              <span>From</span>
+              <input id="from" name="from" type="date" />
+            </label>
+
+            <label>
+              <span>To</span>
+              <input id="to" name="to" type="date" />
+            </label>
+
+            <label>
+              <span>Account</span>
+              <input id="account" name="account" type="text" placeholder="4092" />
+            </label>
+
+            <label>
+              <span>Top rows</span>
+              <input id="top" name="top" type="number" min="1" step="1" placeholder="50" />
+            </label>
+
+            <button id="submit-button" type="submit">Fetch Ledger Rows</button>
+          </form>
+
+          <p id="status" class="status" aria-live="polite">Ready.</p>
+          <p id="error" class="error" hidden></p>
+        </section>
+
+        <section class="panel results-panel">
+          <div class="panel-header">
+            <h2>Results</h2>
+            <p id="results-caption">No report loaded yet.</p>
+          </div>
+
+          <div id="summary" class="summary-grid"></div>
+
+          <div class="matched-clients-block">
+            <h3>Matched Clients</h3>
+            <p id="matched-clients" class="matched-clients empty">No data yet.</p>
+          </div>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Posting Date</th>
+                  <th>Document Date</th>
+                  <th>Document No</th>
+                  <th>Client Name</th>
+                  <th>Amount</th>
+                  <th>Amount x 1.2</th>
+                </tr>
+              </thead>
+              <tbody id="results-body">
+                <tr>
+                  <td colspan="6" class="empty-state">Run a report to see rows here.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>

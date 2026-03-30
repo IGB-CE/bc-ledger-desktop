@@ -1,0 +1,4 @@
+node_modules/
+.env
+release/
+src/generated-embedded-config.js
