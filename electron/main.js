@@ -1,7 +1,6 @@
 const path = require("path");
 const { app, BrowserWindow, ipcMain, screen } = require("electron");
 const { buildLedgerReport } = require("../src/ledger-service");
-const { config } = require("../src/config");
 
 function createWindow() {
   const { workAreaSize } = screen.getPrimaryDisplay();
@@ -25,10 +24,6 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
-  ipcMain.handle("ledger:get-defaults", async () => ({
-    accountNo: config.accountNo,
-  }));
-
   ipcMain.handle("ledger:run-report", async (_event, options) => {
     try {
       const report = await buildLedgerReport(options || {});
