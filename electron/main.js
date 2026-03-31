@@ -1,11 +1,14 @@
 const path = require("path");
-const { app, BrowserWindow, ipcMain } = require("electron");
+const { app, BrowserWindow, ipcMain, screen } = require("electron");
 const { buildLedgerReport } = require("../src/ledger-service");
 const { config } = require("../src/config");
 
 function createWindow() {
+  const { workAreaSize } = screen.getPrimaryDisplay();
+  const width = Math.min(1440, Math.floor(workAreaSize.width * 0.96));
+
   const mainWindow = new BrowserWindow({
-    width: 1280,
+    width,
     height: 860,
     minWidth: 980,
     minHeight: 720,
