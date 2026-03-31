@@ -72,7 +72,7 @@ function renderMatchedClients(clients) {
 
 function renderRows(rows) {
   if (!rows || rows.length === 0) {
-    resultsBodyElement.innerHTML = '<tr><td colspan="8" class="empty-state">No rows matched the current request.</td></tr>';
+    resultsBodyElement.innerHTML = '<tr><td colspan="9" class="empty-state">No rows matched the current request.</td></tr>';
     return;
   }
 
@@ -83,6 +83,7 @@ function renderRows(rows) {
           <td>${escapeHtml(row.postingDate)}</td>
           <td>${escapeHtml(row.documentDate)}</td>
           <td>${escapeHtml(row.documentNo)}</td>
+          <td>${escapeHtml(row.documentFiscalNo)}</td>
           <td>${escapeHtml(row.documentType)}</td>
           <td class="detail-cell">${escapeHtml(row.glDescription)}</td>
           <td>${escapeHtml(row.clientName)}</td>

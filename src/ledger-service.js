@@ -131,20 +131,23 @@ async function fetchMatchingDocumentNameMap({ clientSearch, from, to }) {
   return result;
 }
 
-async function fetchHeaderNameMapForEntity(entity, documentNumbers) {
+async function fetchHeaderFieldMapForEntity(entity, documentNumbers, fieldName) {
   const result = new Map();
-  const chunks = chunkArray(documentNumbers, 20);
+  const uniqueDocumentNumbers = [...new Set(documentNumbers)];
+  const chunks = chunkArray(uniqueDocumentNumbers, 20);
 
   for (const chunk of chunks) {
     const rows = await fetchEntity(entity, {
       filter: buildOrFilter("No", chunk),
-      select: ["No", "Sell_to_Customer_Name"],
+      select: ["No", fieldName],
       top: chunk.length,
     });
 
     for (const row of rows) {
-      if (row.No && row.Sell_to_Customer_Name && !result.has(row.No)) {
-        result.set(row.No, row.Sell_to_Customer_Name.trim());
+      const fieldValue = normalizeString(row[fieldName]);
+
+      if (row.No && fieldValue && !result.has(row.No)) {
+        result.set(row.No, fieldValue);
       }
     }
   }
@@ -152,9 +155,20 @@ async function fetchHeaderNameMapForEntity(entity, documentNumbers) {
   return result;
 }
 
+async function fetchHeaderNameMapForEntity(entity, documentNumbers) {
+  return fetchHeaderFieldMapForEntity(entity, documentNumbers, "Sell_to_Customer_Name");
+}
+
 async function fetchDocumentNameMap(documentNumbers) {
   const invoiceMap = await fetchHeaderNameMapForEntity("PostedSalesInvoice", documentNumbers);
   const creditMemoMap = await fetchHeaderNameMapForEntity("PSCM", documentNumbers);
+
+  return new Map([...invoiceMap, ...creditMemoMap]);
+}
+
+async function fetchDocumentFiscalNoMap(documentNumbers) {
+  const invoiceMap = await fetchHeaderFieldMapForEntity("PSI_Header", documentNumbers, "Document_No_Fiscal");
+  const creditMemoMap = await fetchHeaderFieldMapForEntity("PSCM", documentNumbers, "Document_No_Fiscal");
 
   return new Map([...invoiceMap, ...creditMemoMap]);
 }
@@ -307,7 +321,7 @@ function sortLedgerRows(rows) {
   });
 }
 
-function buildReportRows(rows, nameMap, documentLineDescriptionMap) {
+function buildReportRows(rows, nameMap, documentLineDescriptionMap, documentFiscalNoMap) {
   return rows.map((row) => {
     const amount = Number(row.Amount ?? 0);
 
@@ -315,6 +329,7 @@ function buildReportRows(rows, nameMap, documentLineDescriptionMap) {
       postingDate: row.Posting_Date || "",
       documentDate: row.Document_Date || "",
       documentNo: row.Document_No || "",
+      documentFiscalNo: documentFiscalNoMap.get(row.Document_No) || "",
       documentType: normalizeDocumentType(row.Document_Type),
       glDescription: documentLineDescriptionMap.get(row.Document_No) || "",
       clientName: nameMap.get(row.Document_No) || "",
@@ -364,8 +379,10 @@ async function buildLedgerReport(options = {}) {
   }
 
   const sortedRows = sortLedgerRows(ledgerRows);
-  const documentLineDescriptionMap = await fetchDocumentLineDescriptionMap(sortedRows.map((row) => row.Document_No));
-  const allReportRows = buildReportRows(sortedRows, nameMap, documentLineDescriptionMap);
+  const documentNumbers = sortedRows.map((row) => row.Document_No);
+  const documentLineDescriptionMap = await fetchDocumentLineDescriptionMap(documentNumbers);
+  const documentFiscalNoMap = await fetchDocumentFiscalNoMap(documentNumbers);
+  const allReportRows = buildReportRows(sortedRows, nameMap, documentLineDescriptionMap, documentFiscalNoMap);
   const displayedReportRows = top ? allReportRows.slice(0, top) : allReportRows;
   const summary = buildSummary(allReportRows, displayedReportRows);
 
