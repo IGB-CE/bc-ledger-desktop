@@ -267,7 +267,7 @@ button:disabled {
 table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 760px;
+  min-width: 1080px;
 }
 
 thead {
@@ -279,6 +279,10 @@ td {
   padding: 13px 14px;
   text-align: left;
   border-bottom: 1px solid rgba(92, 71, 47, 0.08);
+}
+
+.detail-cell {
+  min-width: 280px;
 }
 
 th {

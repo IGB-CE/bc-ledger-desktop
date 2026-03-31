@@ -1,6 +1,8 @@
 const { buildOrFilter, chunkArray, escapeODataString, fetchAllEntity, fetchEntity } = require("./bc-client");
 const { config } = require("./config");
 
+const GL_DESCRIPTION_ACCOUNT_NUMBERS = ["4091", "4092"];
+
 function normalizeString(value) {
   return String(value || "").trim();
 }
@@ -157,6 +159,75 @@ async function fetchDocumentNameMap(documentNumbers) {
   return new Map([...invoiceMap, ...creditMemoMap]);
 }
 
+function buildDocumentLineFilter(documentNumbers) {
+  const documentFilter = buildOrFilter("Document_No", documentNumbers);
+  const accountFilter = buildOrFilter("No", GL_DESCRIPTION_ACCOUNT_NUMBERS);
+
+  if (!documentFilter || !accountFilter) {
+    return "";
+  }
+
+  return `(${documentFilter}) and Type eq 'G/L Account' and (${accountFilter})`;
+}
+
+function extractDocumentLineDescription(row) {
+  return normalizeString(row.Long_Description) || normalizeString(row.Description_2) || normalizeString(row.Description);
+}
+
+async function fetchDocumentLineDescriptionMapForEntity(entity, documentNumbers, select) {
+  const result = new Map();
+  const uniqueDocumentNumbers = [...new Set(documentNumbers)];
+  const chunks = chunkArray(uniqueDocumentNumbers, 20);
+
+  for (const chunk of chunks) {
+    const filter = buildDocumentLineFilter(chunk);
+
+    if (!filter) {
+      continue;
+    }
+
+    const rows = await fetchAllEntity(entity, {
+      filter,
+      select,
+    });
+
+    rows
+      .filter((row) => row.Document_No)
+      .sort((left, right) => Number(left.Line_No || 0) - Number(right.Line_No || 0))
+      .forEach((row) => {
+        const description = extractDocumentLineDescription(row);
+
+        if (description && !result.has(row.Document_No)) {
+          result.set(row.Document_No, description);
+        }
+      });
+  }
+
+  return result;
+}
+
+async function fetchDocumentLineDescriptionMap(documentNumbers) {
+  const invoiceMap = await fetchDocumentLineDescriptionMapForEntity("PostedSalesInvoiceSalesInvLines", documentNumbers, [
+    "Document_No",
+    "Line_No",
+    "Type",
+    "No",
+    "Long_Description",
+    "Description_2",
+    "Description",
+  ]);
+  const creditMemoMap = await fetchDocumentLineDescriptionMapForEntity("PSCM_Lines", documentNumbers, [
+    "Document_No",
+    "Line_No",
+    "Type",
+    "No",
+    "Description_2",
+    "Description",
+  ]);
+
+  return new Map([...invoiceMap, ...creditMemoMap]);
+}
+
 function mergeMaps(primaryMap, fallbackMap) {
   const merged = new Map(primaryMap);
 
@@ -171,6 +242,26 @@ function mergeMaps(primaryMap, fallbackMap) {
 
 function roundToTwo(value) {
   return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+}
+
+function normalizeDocumentType(value) {
+  const normalized = normalizeString(value);
+
+  if (!normalized) {
+    return "";
+  }
+
+  const compact = normalized.replace(/[_\s]+/g, " ").trim().toLowerCase();
+
+  if (compact === "invoice") {
+    return "Invoice";
+  }
+
+  if (compact === "credit memo") {
+    return "Credit Memo";
+  }
+
+  return compact.replace(/\b\w/g, (character) => character.toUpperCase());
 }
 
 async function fetchLedgerRowsForClient({ accountNo, clientSearch, from, to }) {
@@ -216,7 +307,7 @@ function sortLedgerRows(rows) {
   });
 }
 
-function buildReportRows(rows, nameMap) {
+function buildReportRows(rows, nameMap, documentLineDescriptionMap) {
   return rows.map((row) => {
     const amount = Number(row.Amount ?? 0);
 
@@ -224,6 +315,8 @@ function buildReportRows(rows, nameMap) {
       postingDate: row.Posting_Date || "",
       documentDate: row.Document_Date || "",
       documentNo: row.Document_No || "",
+      documentType: normalizeDocumentType(row.Document_Type),
+      glDescription: documentLineDescriptionMap.get(row.Document_No) || "",
       clientName: nameMap.get(row.Document_No) || "",
       amount,
       amountTimes1_2: roundToTwo(amount * 1.2),
@@ -271,7 +364,8 @@ async function buildLedgerReport(options = {}) {
   }
 
   const sortedRows = sortLedgerRows(ledgerRows);
-  const allReportRows = buildReportRows(sortedRows, nameMap);
+  const documentLineDescriptionMap = await fetchDocumentLineDescriptionMap(sortedRows.map((row) => row.Document_No));
+  const allReportRows = buildReportRows(sortedRows, nameMap, documentLineDescriptionMap);
   const displayedReportRows = top ? allReportRows.slice(0, top) : allReportRows;
   const summary = buildSummary(allReportRows, displayedReportRows);
 
