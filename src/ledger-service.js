@@ -2,9 +2,28 @@ const { buildOrFilter, chunkArray, escapeODataString, fetchAllEntity, fetchEntit
 const { config } = require("./config");
 
 const GL_DESCRIPTION_ACCOUNT_NUMBERS = ["4091", "4092"];
+const ACCOUNT_REPORT_CONFIG = {
+  "4092": {
+    currencyCode: "ALL",
+    amountField: "Amount",
+  },
+  "4091": {
+    currencyCode: "EUR",
+    amountField: "Additional_Currency_Amount",
+  },
+};
 
 function normalizeString(value) {
   return String(value || "").trim();
+}
+
+function getAccountReportConfig(accountNo) {
+  return (
+    ACCOUNT_REPORT_CONFIG[normalizeString(accountNo)] || {
+      currencyCode: "",
+      amountField: "Amount",
+    }
+  );
 }
 
 function normalizeTop(value) {
@@ -49,7 +68,7 @@ function buildLedgerFilter({ accountNo, from, to, documentNumbers = [] }) {
 async function fetchLedgerRows({ accountNo, from, to, documentNumbers = [] }) {
   return fetchAllEntity("G_LEntries", {
     filter: buildLedgerFilter({ accountNo, from, to, documentNumbers }),
-    select: ["Entry_No", "Posting_Date", "Document_Date", "Document_No", "Document_Type", "Amount"],
+    select: ["Entry_No", "Posting_Date", "Document_Date", "Document_No", "Document_Type", "Amount", "Additional_Currency_Amount"],
   });
 }
 
@@ -321,9 +340,9 @@ function sortLedgerRows(rows) {
   });
 }
 
-function buildReportRows(rows, nameMap, documentLineDescriptionMap, documentFiscalNoMap) {
+function buildReportRows(rows, nameMap, documentLineDescriptionMap, documentFiscalNoMap, accountReportConfig) {
   return rows.map((row) => {
-    const amount = Number(row.Amount ?? 0);
+    const amount = Number(row[accountReportConfig.amountField] ?? row.Amount ?? 0);
 
     return {
       postingDate: row.Posting_Date || "",
@@ -355,6 +374,7 @@ function buildSummary(allReportRows, displayedRows) {
 
 async function buildLedgerReport(options = {}) {
   const accountNo = normalizeString(options.accountNo) || config.accountNo;
+  const accountReportConfig = getAccountReportConfig(accountNo);
   const clientSearch = normalizeString(options.clientSearch);
   const from = normalizeString(options.from);
   const to = normalizeString(options.to);
@@ -382,12 +402,19 @@ async function buildLedgerReport(options = {}) {
   const documentNumbers = sortedRows.map((row) => row.Document_No);
   const documentLineDescriptionMap = await fetchDocumentLineDescriptionMap(documentNumbers);
   const documentFiscalNoMap = await fetchDocumentFiscalNoMap(documentNumbers);
-  const allReportRows = buildReportRows(sortedRows, nameMap, documentLineDescriptionMap, documentFiscalNoMap);
+  const allReportRows = buildReportRows(
+    sortedRows,
+    nameMap,
+    documentLineDescriptionMap,
+    documentFiscalNoMap,
+    accountReportConfig
+  );
   const displayedReportRows = top ? allReportRows.slice(0, top) : allReportRows;
   const summary = buildSummary(allReportRows, displayedReportRows);
 
   return {
     accountNo,
+    currencyCode: accountReportConfig.currencyCode,
     clientSearch,
     from,
     to,

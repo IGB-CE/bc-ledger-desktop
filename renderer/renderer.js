@@ -9,6 +9,10 @@ const errorElement = document.getElementById("error");
 const resultsCaptionElement = document.getElementById("results-caption");
 const reportSectionsElement = document.getElementById("report-sections");
 const REPORT_ACCOUNTS = ["4092", "4091"];
+const ACCOUNT_CURRENCY_BY_NO = {
+  "4092": "ALL",
+  "4091": "EUR",
+};
 const currencyFormatter = new Intl.NumberFormat("en-US", {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
@@ -37,12 +41,20 @@ function formatAmount(value) {
   return currencyFormatter.format(Number(value || 0));
 }
 
-function renderSummaryHtml(summary) {
+function getAccountCurrencyCode(accountNo) {
+  return ACCOUNT_CURRENCY_BY_NO[String(accountNo || "").trim()] || "";
+}
+
+function buildAmountLabel(label, currencyCode) {
+  return currencyCode ? `${label} (${currencyCode})` : label;
+}
+
+function renderSummaryHtml(summary, currencyCode) {
   const items = [
     { label: "Matched rows", value: summary.totalCount ?? 0 },
     { label: "Displayed rows", value: summary.displayedCount ?? 0 },
-    { label: "Total amount", value: formatAmount(summary.totalAmount) },
-    { label: "Total with VAT", value: formatAmount(summary.totalAmountTimes1_2) },
+    { label: buildAmountLabel("Total amount", currencyCode), value: formatAmount(summary.totalAmount) },
+    { label: buildAmountLabel("Total with VAT", currencyCode), value: formatAmount(summary.totalAmountTimes1_2) },
   ];
 
   return items
@@ -97,7 +109,7 @@ function renderRowsHtml(rows, loaded) {
 }
 
 function buildResultsCaption({ clientSearch, from, to }) {
-  const captionParts = ["Accounts 4092 and 4091"];
+  const captionParts = ["Accounts 4092 (ALL) and 4091 (EUR)"];
 
   if (clientSearch) {
     captionParts.push(`Client search: ${clientSearch}`);
@@ -111,31 +123,39 @@ function buildResultsCaption({ clientSearch, from, to }) {
 }
 
 function buildSectionCaption(report) {
+  const currencyCode = report.currencyCode || getAccountCurrencyCode(report.accountNo);
+  const currencyText = currencyCode ? `Currency: ${currencyCode}. ` : "";
+
   if (!report.loaded) {
-    return "Run a report to load this account.";
+    return `${currencyText}Run a report to load this account.`;
   }
 
   if (report.summary.totalCount === report.summary.displayedCount) {
-    return `Showing ${report.summary.displayedCount} row(s).`;
+    return `${currencyText}Showing ${report.summary.displayedCount} row(s).`;
   }
 
-  return `Showing ${report.summary.displayedCount} of ${report.summary.totalCount} row(s).`;
+  return `${currencyText}Showing ${report.summary.displayedCount} of ${report.summary.totalCount} row(s).`;
 }
 
 function renderReportSections(reports) {
   reportSectionsElement.innerHTML = reports
-    .map(
-      (report) => `
+    .map((report) => {
+      const currencyCode = report.currencyCode || getAccountCurrencyCode(report.accountNo);
+
+      return `
         <section class="account-report">
           <div class="account-report-header">
             <div>
               <p class="account-eyebrow">G/L Account</p>
-              <h3>${escapeHtml(report.accountNo)}</h3>
+              <div class="account-title-row">
+                <h3>${escapeHtml(report.accountNo)}</h3>
+                ${currencyCode ? `<span class="currency-badge">${escapeHtml(currencyCode)}</span>` : ""}
+              </div>
             </div>
             <p class="account-report-caption">${escapeHtml(buildSectionCaption(report))}</p>
           </div>
 
-          <div class="summary-grid">${renderSummaryHtml(report.summary)}</div>
+          <div class="summary-grid">${renderSummaryHtml(report.summary, currencyCode)}</div>
           ${renderMatchedClientsHtml(report)}
 
           <div class="table-wrap">
@@ -149,8 +169,8 @@ function renderReportSections(reports) {
                   <th>Document Type</th>
                   <th>G/L Description</th>
                   <th>Client Name</th>
-                  <th>Amount</th>
-                  <th>Amount with VAT</th>
+                  <th>${escapeHtml(buildAmountLabel("Amount", currencyCode))}</th>
+                  <th>${escapeHtml(buildAmountLabel("Amount with VAT", currencyCode))}</th>
                 </tr>
               </thead>
               <tbody>
@@ -159,14 +179,15 @@ function renderReportSections(reports) {
             </table>
           </div>
         </section>
-      `
-    )
+      `;
+    })
     .join("");
 }
 
 function buildEmptyReport(accountNo) {
   return {
     accountNo,
+    currencyCode: getAccountCurrencyCode(accountNo),
     loaded: false,
     rows: [],
     summary: {
