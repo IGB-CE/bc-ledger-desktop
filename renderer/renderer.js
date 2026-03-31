@@ -44,7 +44,7 @@ function renderSummary(summary) {
     { label: "Matched rows", value: summary.totalCount ?? 0 },
     { label: "Displayed rows", value: summary.displayedCount ?? 0 },
     { label: "Total amount", value: formatAmount(summary.totalAmount) },
-    { label: "Total x 1.2", value: formatAmount(summary.totalAmountTimes1_2) },
+    { label: "Total with VAT", value: formatAmount(summary.totalAmountTimes1_2) },
   ];
 
   summaryElement.innerHTML = items
