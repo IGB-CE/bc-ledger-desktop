@@ -17,6 +17,33 @@ function normalizeString(value) {
   return String(value || "").trim();
 }
 
+function normalizeClientName(value) {
+  return String(value || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
+function toTitleCase(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+function buildSearchVariants(value) {
+  const normalized = normalizeString(value);
+
+  return [...new Set([normalized, normalized.toLowerCase(), normalized.toUpperCase(), toTitleCase(normalized)].filter(Boolean))];
+}
+
+function getClientSearchTokens(searchTerm) {
+  return normalizeClientName(searchTerm).split(" ").filter(Boolean);
+}
+
+function matchesNormalizedClientName(bcName, input) {
+  return normalizeClientName(bcName) === normalizeClientName(input);
+}
+
 function getAccountReportConfig(accountNo) {
   return (
     ACCOUNT_REPORT_CONFIG[normalizeString(accountNo)] || {
@@ -94,16 +121,19 @@ async function fetchFallbackCustomerMap(documentNumbers) {
 }
 
 function buildContainsFilter(fieldName, searchTerm) {
-  const normalized = normalizeString(searchTerm);
-  const variants = [...new Set([normalized, normalized.toUpperCase()])].filter(Boolean);
+  const tokens = getClientSearchTokens(searchTerm);
 
-  if (variants.length === 0) {
+  if (tokens.length === 0) {
     return "";
   }
 
-  return variants
-    .map((variant) => `contains(${fieldName},'${escapeODataString(variant)}')`)
-    .join(" or ");
+  return tokens
+    .map((token) => {
+      const variants = buildSearchVariants(token);
+
+      return `(${variants.map((variant) => `contains(${fieldName},'${escapeODataString(variant)}')`).join(" or ")})`;
+    })
+    .join(" and ");
 }
 
 function buildHeaderSearchFilter({ fieldName, clientSearch, from, to }) {
@@ -121,11 +151,12 @@ function buildHeaderSearchFilter({ fieldName, clientSearch, from, to }) {
 
 async function fetchMatchingHeaderRows(entity, nameField, { clientSearch, from, to }) {
   const filter = buildHeaderSearchFilter({ fieldName: nameField, clientSearch, from, to });
-
-  return fetchAllEntity(entity, {
+  const rows = await fetchAllEntity(entity, {
     filter,
     select: ["No", nameField, "Posting_Date", "Document_Date"],
   });
+
+  return rows.filter((row) => matchesNormalizedClientName(row[nameField], clientSearch));
 }
 
 async function fetchMatchingDocumentNameMap({ clientSearch, from, to }) {
