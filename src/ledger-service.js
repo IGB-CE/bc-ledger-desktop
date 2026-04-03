@@ -147,14 +147,15 @@ function buildLedgerFilter({ accountNo, from, to, documentNumbers = [] }) {
   return clauses.join(" and ");
 }
 
-async function fetchLedgerRows({ accountNo, from, to, documentNumbers = [] }) {
+async function fetchLedgerRows({ accountNo, from, to, documentNumbers = [], signal }) {
   return fetchAllEntity("G_LEntries", {
     filter: buildLedgerFilter({ accountNo, from, to, documentNumbers }),
     select: ["Entry_No", "Posting_Date", "Document_Date", "Document_No", "Document_Type", "Amount", "Additional_Currency_Amount"],
+    signal,
   });
 }
 
-async function fetchLedgerRowsForDocumentNumbers({ accountNo, from, to, documentNumbers }) {
+async function fetchLedgerRowsForDocumentNumbers({ accountNo, from, to, documentNumbers, signal }) {
   if (!documentNumbers || documentNumbers.length === 0) {
     return [];
   }
@@ -168,6 +169,7 @@ async function fetchLedgerRowsForDocumentNumbers({ accountNo, from, to, document
       from,
       to,
       documentNumbers: chunk,
+      signal,
     });
 
     ledgerRows.push(...chunkRows);
@@ -176,7 +178,7 @@ async function fetchLedgerRowsForDocumentNumbers({ accountNo, from, to, document
   return ledgerRows;
 }
 
-async function fetchFallbackCustomerMap(documentNumbers) {
+async function fetchFallbackCustomerMap(documentNumbers, signal) {
   const result = new Map();
   const chunks = chunkArray(documentNumbers, 20);
 
@@ -184,6 +186,7 @@ async function fetchFallbackCustomerMap(documentNumbers) {
     const rows = await fetchEntity("Cust_LedgerEntries", {
       filter: buildOrFilter("Document_No", chunk),
       select: ["Document_No", "Customer_Name"],
+      signal,
       top: chunk.length,
     });
 
@@ -226,27 +229,30 @@ function buildHeaderSearchFilter({ fieldName, clientSearch, from, to }) {
   return clauses.join(" and ");
 }
 
-async function fetchMatchingHeaderRows(entity, nameField, { clientSearch, from, to }) {
+async function fetchMatchingHeaderRows(entity, nameField, { clientSearch, from, to, signal }) {
   const filter = buildHeaderSearchFilter({ fieldName: nameField, clientSearch, from, to });
   const rows = await fetchAllEntity(entity, {
     filter,
     select: ["No", nameField, "Posting_Date", "Document_Date"],
+    signal,
   });
 
   return rows.filter((row) => matchesNormalizedClientName(row[nameField], clientSearch));
 }
 
-async function fetchMatchingDocumentNameMap({ clientSearch, from, to }) {
+async function fetchMatchingDocumentNameMap({ clientSearch, from, to, signal }) {
   const result = new Map();
   const invoices = await fetchMatchingHeaderRows("PostedSalesInvoice", "Sell_to_Customer_Name", {
     clientSearch,
     from,
     to,
+    signal,
   });
   const creditMemos = await fetchMatchingHeaderRows("PSCM", "Sell_to_Customer_Name", {
     clientSearch,
     from,
     to,
+    signal,
   });
 
   for (const row of [...invoices, ...creditMemos]) {
@@ -258,7 +264,7 @@ async function fetchMatchingDocumentNameMap({ clientSearch, from, to }) {
   return result;
 }
 
-async function fetchHeaderFieldMapForEntity(entity, documentNumbers, fieldName) {
+async function fetchHeaderFieldMapForEntity(entity, documentNumbers, fieldName, signal) {
   const result = new Map();
   const uniqueDocumentNumbers = [...new Set(documentNumbers)];
   const chunks = chunkArray(uniqueDocumentNumbers, 20);
@@ -267,6 +273,7 @@ async function fetchHeaderFieldMapForEntity(entity, documentNumbers, fieldName) 
     const rows = await fetchEntity(entity, {
       filter: buildOrFilter("No", chunk),
       select: ["No", fieldName],
+      signal,
       top: chunk.length,
     });
 
@@ -282,20 +289,20 @@ async function fetchHeaderFieldMapForEntity(entity, documentNumbers, fieldName) 
   return result;
 }
 
-async function fetchHeaderNameMapForEntity(entity, documentNumbers) {
-  return fetchHeaderFieldMapForEntity(entity, documentNumbers, "Sell_to_Customer_Name");
+async function fetchHeaderNameMapForEntity(entity, documentNumbers, signal) {
+  return fetchHeaderFieldMapForEntity(entity, documentNumbers, "Sell_to_Customer_Name", signal);
 }
 
-async function fetchDocumentNameMap(documentNumbers) {
-  const invoiceMap = await fetchHeaderNameMapForEntity("PostedSalesInvoice", documentNumbers);
-  const creditMemoMap = await fetchHeaderNameMapForEntity("PSCM", documentNumbers);
+async function fetchDocumentNameMap(documentNumbers, signal) {
+  const invoiceMap = await fetchHeaderNameMapForEntity("PostedSalesInvoice", documentNumbers, signal);
+  const creditMemoMap = await fetchHeaderNameMapForEntity("PSCM", documentNumbers, signal);
 
   return new Map([...invoiceMap, ...creditMemoMap]);
 }
 
-async function fetchDocumentFiscalNoMap(documentNumbers) {
-  const invoiceMap = await fetchHeaderFieldMapForEntity("PSI_Header", documentNumbers, "Document_No_Fiscal");
-  const creditMemoMap = await fetchHeaderFieldMapForEntity("PSCM", documentNumbers, "Document_No_Fiscal");
+async function fetchDocumentFiscalNoMap(documentNumbers, signal) {
+  const invoiceMap = await fetchHeaderFieldMapForEntity("PSI_Header", documentNumbers, "Document_No_Fiscal", signal);
+  const creditMemoMap = await fetchHeaderFieldMapForEntity("PSCM", documentNumbers, "Document_No_Fiscal", signal);
 
   return new Map([...invoiceMap, ...creditMemoMap]);
 }
@@ -315,7 +322,7 @@ function extractDocumentLineDescription(row) {
   return normalizeString(row.Long_Description) || normalizeString(row.Description_2) || normalizeString(row.Description);
 }
 
-async function fetchDocumentLineDescriptionMapForEntity(entity, documentNumbers, select) {
+async function fetchDocumentLineDescriptionMapForEntity(entity, documentNumbers, select, signal) {
   const result = new Map();
   const uniqueDocumentNumbers = [...new Set(documentNumbers)];
   const chunks = chunkArray(uniqueDocumentNumbers, 20);
@@ -330,6 +337,7 @@ async function fetchDocumentLineDescriptionMapForEntity(entity, documentNumbers,
     const rows = await fetchAllEntity(entity, {
       filter,
       select,
+      signal,
     });
 
     rows
@@ -347,7 +355,7 @@ async function fetchDocumentLineDescriptionMapForEntity(entity, documentNumbers,
   return result;
 }
 
-async function fetchDocumentLineDescriptionMap(documentNumbers) {
+async function fetchDocumentLineDescriptionMap(documentNumbers, signal) {
   const invoiceMap = await fetchDocumentLineDescriptionMapForEntity("PostedSalesInvoiceSalesInvLines", documentNumbers, [
     "Document_No",
     "Line_No",
@@ -356,7 +364,7 @@ async function fetchDocumentLineDescriptionMap(documentNumbers) {
     "Long_Description",
     "Description_2",
     "Description",
-  ]);
+  ], signal);
   const creditMemoMap = await fetchDocumentLineDescriptionMapForEntity("PSCM_Lines", documentNumbers, [
     "Document_No",
     "Line_No",
@@ -364,7 +372,7 @@ async function fetchDocumentLineDescriptionMap(documentNumbers) {
     "No",
     "Description_2",
     "Description",
-  ]);
+  ], signal);
 
   return new Map([...invoiceMap, ...creditMemoMap]);
 }
@@ -405,8 +413,8 @@ function normalizeDocumentType(value) {
   return compact.replace(/\b\w/g, (character) => character.toUpperCase());
 }
 
-async function fetchLedgerRowsForClient({ accountNo, clientSearch, from, to }) {
-  const documentNameMap = await fetchMatchingDocumentNameMap({ clientSearch, from, to });
+async function fetchLedgerRowsForClient({ accountNo, clientSearch, from, to, signal }) {
+  const documentNameMap = await fetchMatchingDocumentNameMap({ clientSearch, from, to, signal });
   const documentNumbers = [...documentNameMap.keys()];
 
   if (documentNumbers.length === 0) {
@@ -421,6 +429,7 @@ async function fetchLedgerRowsForClient({ accountNo, clientSearch, from, to }) {
     from,
     to,
     documentNumbers,
+    signal,
   });
 
   return {
@@ -473,12 +482,12 @@ function buildSummary(allReportRows, displayedRows) {
   };
 }
 
-async function buildLedgerReportFromRows({ accountNo, clientSearch, from, to, top, ledgerRows, nameMap }) {
+async function buildLedgerReportFromRows({ accountNo, clientSearch, from, to, top, ledgerRows, nameMap, signal }) {
   const accountReportConfig = getAccountReportConfig(accountNo);
   const sortedRows = sortLedgerRows(ledgerRows);
   const documentNumbers = sortedRows.map((row) => row.Document_No);
-  const documentLineDescriptionMap = await fetchDocumentLineDescriptionMap(documentNumbers);
-  const documentFiscalNoMap = await fetchDocumentFiscalNoMap(documentNumbers);
+  const documentLineDescriptionMap = await fetchDocumentLineDescriptionMap(documentNumbers, signal);
+  const documentFiscalNoMap = await fetchDocumentFiscalNoMap(documentNumbers, signal);
   const allReportRows = buildReportRows(
     sortedRows,
     nameMap,
@@ -507,11 +516,12 @@ async function buildLedgerReport(options = {}) {
   const from = normalizeString(options.from);
   const to = normalizeString(options.to);
   const top = normalizeTop(options.top);
+  const signal = options.signal;
   let nameMap;
   let ledgerRows;
 
   if (clientSearch) {
-    const result = await fetchLedgerRowsForClient({ accountNo, clientSearch, from, to });
+    const result = await fetchLedgerRowsForClient({ accountNo, clientSearch, from, to, signal });
     nameMap = result.nameMap;
     ledgerRows = result.rows;
   } else {
@@ -519,10 +529,10 @@ async function buildLedgerReport(options = {}) {
       throw new Error("Use client search, or provide both from and to dates.");
     }
 
-    ledgerRows = await fetchLedgerRows({ accountNo, from, to });
+    ledgerRows = await fetchLedgerRows({ accountNo, from, to, signal });
     const documentNumbers = ledgerRows.map((row) => row.Document_No);
-    const documentNameMap = await fetchDocumentNameMap(documentNumbers);
-    const fallbackCustomerMap = await fetchFallbackCustomerMap(documentNumbers);
+    const documentNameMap = await fetchDocumentNameMap(documentNumbers, signal);
+    const fallbackCustomerMap = await fetchFallbackCustomerMap(documentNumbers, signal);
     nameMap = mergeMaps(documentNameMap, fallbackCustomerMap);
   }
 
@@ -534,6 +544,7 @@ async function buildLedgerReport(options = {}) {
     top,
     ledgerRows,
     nameMap,
+    signal,
   });
 }
 
@@ -543,9 +554,10 @@ async function buildLedgerReports(options = {}) {
   const from = normalizeString(options.from);
   const to = normalizeString(options.to);
   const top = normalizeTop(options.top);
+  const signal = options.signal;
 
   if (clientSearch) {
-    const documentNameMap = await fetchMatchingDocumentNameMap({ clientSearch, from, to });
+    const documentNameMap = await fetchMatchingDocumentNameMap({ clientSearch, from, to, signal });
     const documentNumbers = [...documentNameMap.keys()];
 
     return Promise.all(
@@ -555,6 +567,7 @@ async function buildLedgerReports(options = {}) {
           from,
           to,
           documentNumbers,
+          signal,
         });
 
         return buildLedgerReportFromRows({
@@ -565,6 +578,7 @@ async function buildLedgerReports(options = {}) {
           top,
           ledgerRows,
           nameMap: documentNameMap,
+          signal,
         });
       })
     );

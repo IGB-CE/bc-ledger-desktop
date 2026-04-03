@@ -2,6 +2,7 @@ const path = require("path");
 const fs = require("fs/promises");
 const { app, BrowserWindow, dialog, ipcMain, screen } = require("electron");
 const { buildLedgerReport, buildLedgerReports } = require("../src/ledger-service");
+const activeSearchControllers = new Map();
 
 function createWindow() {
   const { workAreaSize } = screen.getPrimaryDisplay();
@@ -35,12 +36,47 @@ app.whenReady().then(() => {
   });
 
   ipcMain.handle("ledger:run-reports", async (_event, options) => {
+    const requestId = String(options?.requestId || "").trim();
+    const controller = new AbortController();
+
+    if (requestId) {
+      activeSearchControllers.set(requestId, controller);
+    }
+
     try {
-      const reports = await buildLedgerReports(options || {});
+      const reports = await buildLedgerReports({
+        ...(options || {}),
+        signal: controller.signal,
+      });
       return { ok: true, reports };
     } catch (error) {
+      if (error?.code === "SEARCH_CANCELED") {
+        return { ok: false, canceled: true, error: error.message };
+      }
+
       return { ok: false, error: error.message };
+    } finally {
+      if (requestId) {
+        activeSearchControllers.delete(requestId);
+      }
     }
+  });
+
+  ipcMain.handle("ledger:cancel-search", async (_event, payload) => {
+    const requestId = String(payload?.requestId || "").trim();
+
+    if (!requestId) {
+      return { ok: false, error: "Missing requestId." };
+    }
+
+    const controller = activeSearchControllers.get(requestId);
+
+    if (!controller) {
+      return { ok: false, error: "Search is no longer active." };
+    }
+
+    controller.abort();
+    return { ok: true, canceled: true };
   });
 
   ipcMain.handle("ledger:save-export", async (_event, payload) => {

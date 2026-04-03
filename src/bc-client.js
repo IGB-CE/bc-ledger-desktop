@@ -46,11 +46,18 @@ async function fetchEntity(entity, options = {}) {
       headers: {
         Accept: "application/json",
       },
+      signal: options.signal,
       timeout: config.timeoutMs,
     });
 
     return Array.isArray(response.data?.value) ? response.data.value : [];
   } catch (error) {
+    if (axios.isCancel(error) || error?.code === "ERR_CANCELED") {
+      const cancellationError = new Error("Search canceled.");
+      cancellationError.code = "SEARCH_CANCELED";
+      throw cancellationError;
+    }
+
     const status = error?.response?.status;
     const details =
       error?.response?.data?.error?.message?.value ||

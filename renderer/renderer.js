@@ -4,6 +4,7 @@ const fromInput = document.getElementById("from");
 const toInput = document.getElementById("to");
 const topInput = document.getElementById("top");
 const submitButton = document.getElementById("submit-button");
+const cancelButton = document.getElementById("cancel-button");
 const statusElement = document.getElementById("status");
 const errorElement = document.getElementById("error");
 const resultsPanelElement = document.getElementById("results-panel");
@@ -33,6 +34,7 @@ const currencyFormatter = new Intl.NumberFormat("en-US", {
 });
 let currentReports = REPORT_ACCOUNTS.map(buildEmptyReport);
 const textEncoder = new TextEncoder();
+let activeSearchRequestId = "";
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -67,6 +69,12 @@ function setResultsLoading(isLoading, message = "Fetching ledger rows...") {
   resultsPanelElement.classList.toggle("is-loading", isLoading);
   resultsLoadingElement.hidden = !isLoading;
   resultsLoadingMessageElement.textContent = message;
+  cancelButton.hidden = !isLoading;
+  cancelButton.disabled = !isLoading;
+}
+
+function createSearchRequestId() {
+  return `search-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 function formatAmount(value) {
@@ -652,15 +660,27 @@ form.addEventListener("submit", async (event) => {
   setStatus("Fetching data from Business Central for accounts 4092 and 4091...");
   setResultsLoading(true, "Searching Business Central and building both account tables...");
   submitButton.disabled = true;
+  const requestId = createSearchRequestId();
+  activeSearchRequestId = requestId;
 
   try {
     const requestPayload = buildRequestPayload();
     const response = await window.ledgerApp.runReports({
       ...requestPayload,
       accountNos: REPORT_ACCOUNTS,
+      requestId,
     });
 
+    if (activeSearchRequestId !== requestId) {
+      return;
+    }
+
     if (!response.ok) {
+      if (response.canceled) {
+        setStatus("Search canceled.");
+        return;
+      }
+
       throw new Error(response.error || "Unknown error.");
     }
 
@@ -675,14 +695,40 @@ form.addEventListener("submit", async (event) => {
     resultsCaptionElement.textContent = buildResultsCaption(requestPayload);
     setStatus(`Loaded ${totalDisplayedRows} row(s) across ${reports.length} account table(s).`);
   } catch (error) {
+    if (activeSearchRequestId !== requestId) {
+      return;
+    }
+
     currentReports = REPORT_ACCOUNTS.map(buildEmptyReport);
     renderReportSections(currentReports);
     resultsCaptionElement.textContent = "No report loaded.";
     setError(error.message);
     setStatus("Request failed.");
   } finally {
-    setResultsLoading(false);
-    submitButton.disabled = false;
+    if (activeSearchRequestId === requestId) {
+      activeSearchRequestId = "";
+      setResultsLoading(false);
+      submitButton.disabled = false;
+    }
+  }
+});
+
+cancelButton.addEventListener("click", async () => {
+  const requestId = activeSearchRequestId;
+
+  if (!requestId) {
+    return;
+  }
+
+  cancelButton.disabled = true;
+  setStatus("Canceling search...");
+
+  try {
+    await window.ledgerApp.cancelSearch({ requestId });
+  } catch (error) {
+    setError(error.message);
+    setStatus("Cancel failed.");
+    cancelButton.disabled = false;
   }
 });
 
