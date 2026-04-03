@@ -34,6 +34,14 @@ function stripTrailingClientQualifiers(value) {
   return normalized;
 }
 
+function buildComparableClientTokenKey(value) {
+  return stripTrailingClientQualifiers(value)
+    .split(" ")
+    .filter(Boolean)
+    .sort()
+    .join(" ");
+}
+
 function toTitleCase(value) {
   return String(value || "")
     .toLowerCase()
@@ -62,7 +70,14 @@ function matchesNormalizedClientName(bcName, input) {
     return true;
   }
 
-  return stripTrailingClientQualifiers(normalizedBcName) === stripTrailingClientQualifiers(normalizedInput);
+  const strippedBcName = stripTrailingClientQualifiers(normalizedBcName);
+  const strippedInput = stripTrailingClientQualifiers(normalizedInput);
+
+  if (strippedBcName === strippedInput) {
+    return true;
+  }
+
+  return buildComparableClientTokenKey(strippedBcName) === buildComparableClientTokenKey(strippedInput);
 }
 
 function getAccountReportConfig(accountNo) {
