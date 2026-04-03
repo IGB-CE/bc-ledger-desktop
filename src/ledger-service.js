@@ -24,6 +24,16 @@ function normalizeClientName(value) {
     .toLowerCase();
 }
 
+function stripTrailingClientQualifiers(value) {
+  let normalized = normalizeClientName(value);
+
+  while (/\s*\([^)]*\)$/.test(normalized)) {
+    normalized = normalized.replace(/\s*\([^)]*\)$/, "").trim();
+  }
+
+  return normalized;
+}
+
 function toTitleCase(value) {
   return String(value || "")
     .toLowerCase()
@@ -41,7 +51,18 @@ function getClientSearchTokens(searchTerm) {
 }
 
 function matchesNormalizedClientName(bcName, input) {
-  return normalizeClientName(bcName) === normalizeClientName(input);
+  const normalizedBcName = normalizeClientName(bcName);
+  const normalizedInput = normalizeClientName(input);
+
+  if (!normalizedBcName || !normalizedInput) {
+    return false;
+  }
+
+  if (normalizedBcName === normalizedInput) {
+    return true;
+  }
+
+  return stripTrailingClientQualifiers(normalizedBcName) === stripTrailingClientQualifiers(normalizedInput);
 }
 
 function getAccountReportConfig(accountNo) {
