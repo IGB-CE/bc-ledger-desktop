@@ -43,6 +43,10 @@ function buildComparableClientTokenKey(value) {
     .join(" ");
 }
 
+function buildComparableClientTokens(value) {
+  return [...new Set(stripTrailingClientQualifiers(value).split(" ").filter(Boolean))];
+}
+
 function toTitleCase(value) {
   return String(value || "")
     .toLowerCase()
@@ -78,7 +82,14 @@ function matchesNormalizedClientName(bcName, input) {
     return true;
   }
 
-  return buildComparableClientTokenKey(strippedBcName) === buildComparableClientTokenKey(strippedInput);
+  if (buildComparableClientTokenKey(strippedBcName) === buildComparableClientTokenKey(strippedInput)) {
+    return true;
+  }
+
+  const bcTokens = buildComparableClientTokens(strippedBcName);
+  const inputTokens = buildComparableClientTokens(strippedInput);
+
+  return inputTokens.length > 0 && inputTokens.every((token) => bcTokens.includes(token));
 }
 
 function getAccountReportConfig(accountNo) {
