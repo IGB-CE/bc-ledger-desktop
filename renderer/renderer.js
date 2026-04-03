@@ -6,7 +6,10 @@ const topInput = document.getElementById("top");
 const submitButton = document.getElementById("submit-button");
 const statusElement = document.getElementById("status");
 const errorElement = document.getElementById("error");
+const resultsPanelElement = document.getElementById("results-panel");
 const resultsCaptionElement = document.getElementById("results-caption");
+const resultsLoadingElement = document.getElementById("results-loading");
+const resultsLoadingMessageElement = document.getElementById("results-loading-message");
 const reportSectionsElement = document.getElementById("report-sections");
 const REPORT_ACCOUNTS = ["4092", "4091"];
 const EXPORT_COLUMNS = [
@@ -57,6 +60,13 @@ function setError(message) {
   const hasMessage = Boolean(message);
   errorElement.hidden = !hasMessage;
   errorElement.textContent = message || "";
+}
+
+function setResultsLoading(isLoading, message = "Fetching ledger rows...") {
+  resultsPanelElement.setAttribute("aria-busy", isLoading ? "true" : "false");
+  resultsPanelElement.classList.toggle("is-loading", isLoading);
+  resultsLoadingElement.hidden = !isLoading;
+  resultsLoadingMessageElement.textContent = message;
 }
 
 function formatAmount(value) {
@@ -640,6 +650,7 @@ form.addEventListener("submit", async (event) => {
   event.preventDefault();
   setError("");
   setStatus("Fetching data from Business Central for accounts 4092 and 4091...");
+  setResultsLoading(true, "Searching Business Central and building both account tables...");
   submitButton.disabled = true;
 
   try {
@@ -670,6 +681,7 @@ form.addEventListener("submit", async (event) => {
     setError(error.message);
     setStatus("Request failed.");
   } finally {
+    setResultsLoading(false);
     submitButton.disabled = false;
   }
 });

@@ -142,6 +142,10 @@ body::before {
   padding: 26px;
 }
 
+.results-panel {
+  min-height: 360px;
+}
+
 .panel-header p {
   margin: 8px 0 0;
   line-height: 1.5;
@@ -267,6 +271,49 @@ button:disabled {
   display: grid;
   gap: 22px;
   margin-top: 22px;
+  transition: opacity 180ms ease, filter 180ms ease, transform 180ms ease;
+}
+
+.results-panel.is-loading .account-reports {
+  opacity: 0.28;
+  filter: blur(1px);
+  transform: scale(0.995);
+  pointer-events: none;
+}
+
+.results-loading {
+  position: absolute;
+  inset: 110px 26px 26px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  gap: 14px;
+  border-radius: 22px;
+  background: rgba(255, 250, 241, 0.72);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(15, 118, 110, 0.12);
+}
+
+.results-loading[hidden] {
+  display: none;
+}
+
+.results-loading-spinner {
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  border: 4px solid rgba(15, 118, 110, 0.16);
+  border-top-color: var(--accent);
+  box-shadow: 0 0 0 10px rgba(15, 118, 110, 0.05);
+  animation: spin 780ms linear infinite;
+}
+
+.results-loading-message {
+  margin: 0;
+  color: var(--accent-strong);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
 }
 
 .account-report {
@@ -405,6 +452,12 @@ tbody tr:hover {
   color: var(--muted);
 }
 
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @media (max-width: 980px) {
   .page-shell {
     padding: 24px 16px 32px;
@@ -429,6 +482,10 @@ tbody tr:hover {
     width: 100%;
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .results-loading {
+    inset: 112px 18px 18px;
   }
 
   .report-form {

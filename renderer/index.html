@@ -58,10 +58,15 @@
           <p id="error" class="error" hidden></p>
         </section>
 
-        <section class="panel results-panel">
+        <section id="results-panel" class="panel results-panel" aria-busy="false">
           <div class="panel-header">
             <h2>Results</h2>
             <p id="results-caption">No report loaded yet.</p>
+          </div>
+
+          <div id="results-loading" class="results-loading" hidden>
+            <div class="results-loading-spinner" aria-hidden="true"></div>
+            <p id="results-loading-message" class="results-loading-message">Fetching ledger rows...</p>
           </div>
 
           <div id="report-sections" class="account-reports"></div>
