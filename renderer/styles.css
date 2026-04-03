@@ -151,6 +151,13 @@ body::before {
   line-height: 1.5;
 }
 
+.results-duration {
+  margin: 10px 0 0;
+  color: var(--accent-strong);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
 .report-form {
   display: grid;
   grid-template-columns: minmax(220px, 1.8fr) repeat(3, minmax(130px, 1fr)) auto auto;

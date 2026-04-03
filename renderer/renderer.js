@@ -9,6 +9,7 @@ const statusElement = document.getElementById("status");
 const errorElement = document.getElementById("error");
 const resultsPanelElement = document.getElementById("results-panel");
 const resultsCaptionElement = document.getElementById("results-caption");
+const resultsDurationElement = document.getElementById("results-duration");
 const resultsLoadingElement = document.getElementById("results-loading");
 const resultsLoadingMessageElement = document.getElementById("results-loading-message");
 const reportSectionsElement = document.getElementById("report-sections");
@@ -62,6 +63,32 @@ function setError(message) {
   const hasMessage = Boolean(message);
   errorElement.hidden = !hasMessage;
   errorElement.textContent = message || "";
+}
+
+function formatDuration(durationMs) {
+  if (!Number.isFinite(durationMs) || durationMs < 0) {
+    return "";
+  }
+
+  if (durationMs < 1000) {
+    return `${Math.round(durationMs)} ms`;
+  }
+
+  const seconds = durationMs / 1000;
+
+  if (seconds < 60) {
+    return `${seconds.toFixed(seconds < 10 ? 1 : 0)} s`;
+  }
+
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = Math.round(seconds % 60);
+  return `${minutes}m ${remainingSeconds}s`;
+}
+
+function setResultsDuration(durationMs) {
+  const text = formatDuration(durationMs);
+  resultsDurationElement.hidden = !text;
+  resultsDurationElement.textContent = text ? `Search time: ${text}` : "";
 }
 
 function setResultsLoading(isLoading, message = "Fetching ledger rows...") {
@@ -660,8 +687,10 @@ form.addEventListener("submit", async (event) => {
   setStatus("Fetching data from Business Central for accounts 4092 and 4091...");
   setResultsLoading(true, "Searching Business Central and building both account tables...");
   submitButton.disabled = true;
+  setResultsDuration(null);
   const requestId = createSearchRequestId();
   activeSearchRequestId = requestId;
+  const startedAt = performance.now();
 
   try {
     const requestPayload = buildRequestPayload();
@@ -689,21 +718,26 @@ form.addEventListener("submit", async (event) => {
       loaded: true,
     }));
     const totalDisplayedRows = reports.reduce((sum, report) => sum + (report.summary.displayedCount || 0), 0);
+    const elapsedMs = performance.now() - startedAt;
 
     currentReports = reports;
     renderReportSections(reports);
     resultsCaptionElement.textContent = buildResultsCaption(requestPayload);
-    setStatus(`Loaded ${totalDisplayedRows} row(s) across ${reports.length} account table(s).`);
+    setResultsDuration(elapsedMs);
+    setStatus(`Loaded ${totalDisplayedRows} row(s) across ${reports.length} account table(s) in ${formatDuration(elapsedMs)}.`);
   } catch (error) {
     if (activeSearchRequestId !== requestId) {
       return;
     }
 
+    const elapsedMs = performance.now() - startedAt;
+
     currentReports = REPORT_ACCOUNTS.map(buildEmptyReport);
     renderReportSections(currentReports);
     resultsCaptionElement.textContent = "No report loaded.";
+    setResultsDuration(elapsedMs);
     setError(error.message);
-    setStatus("Request failed.");
+    setStatus(`Request failed after ${formatDuration(elapsedMs)}.`);
   } finally {
     if (activeSearchRequestId === requestId) {
       activeSearchRequestId = "";
