@@ -9,6 +9,17 @@ const errorElement = document.getElementById("error");
 const resultsCaptionElement = document.getElementById("results-caption");
 const reportSectionsElement = document.getElementById("report-sections");
 const REPORT_ACCOUNTS = ["4092", "4091"];
+const EXPORT_COLUMNS = [
+  { key: "postingDate", label: "Posting Date", type: "String" },
+  { key: "documentDate", label: "Document Date", type: "String" },
+  { key: "documentNo", label: "Document No", type: "String" },
+  { key: "documentFiscalNo", label: "Document No. Fiscal", type: "String" },
+  { key: "documentType", label: "Document Type", type: "String" },
+  { key: "glDescription", label: "G/L Description", type: "String" },
+  { key: "clientName", label: "Client Name", type: "String" },
+  { key: "amount", label: "Amount", type: "Number" },
+  { key: "amountTimes1_2", label: "Amount with VAT", type: "Number" },
+];
 const ACCOUNT_CURRENCY_BY_NO = {
   "4092": "ALL",
   "4091": "EUR",
@@ -17,6 +28,8 @@ const currencyFormatter = new Intl.NumberFormat("en-US", {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
 });
+let currentReports = REPORT_ACCOUNTS.map(buildEmptyReport);
+const textEncoder = new TextEncoder();
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -25,6 +38,15 @@ function escapeHtml(value) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+function escapeXml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
 }
 
 function setStatus(message) {
@@ -137,6 +159,400 @@ function buildSectionCaption(report) {
   return `${currencyText}Showing ${report.summary.displayedCount} of ${report.summary.totalCount} row(s).`;
 }
 
+function sanitizeFileSegment(value, fallback) {
+  const sanitized = String(value || "")
+    .trim()
+    .replace(/[<>:"/\\|?*\u0000-\u001f]+/g, "-")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+
+  return sanitized || fallback;
+}
+
+function sanitizeWorksheetName(value) {
+  const sanitized = String(value || "Report")
+    .replace(/[:\\/?*\[\]]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return (sanitized || "Report").slice(0, 31);
+}
+
+function buildExportFileName(report) {
+  const accountNo = sanitizeFileSegment(report.accountNo, "account");
+  const from = sanitizeFileSegment(report.from, "from");
+  const to = sanitizeFileSegment(report.to, "to");
+  const client = sanitizeFileSegment(report.clientSearch, "all-clients");
+
+  return `ledger-${accountNo}-${client}-${from}-to-${to}.xlsx`;
+}
+
+function buildWorksheetCell(reference, value, type = "String", styleIndex = 0) {
+  if (type === "Number") {
+    return `<c r="${reference}" s="${styleIndex}"><v>${Number(value || 0)}</v></c>`;
+  }
+
+  return `<c r="${reference}" t="inlineStr" s="${styleIndex}"><is><t xml:space="preserve">${escapeXml(value)}</t></is></c>`;
+}
+
+function getExcelColumnName(columnNumber) {
+  let result = "";
+  let current = columnNumber;
+
+  while (current > 0) {
+    const remainder = (current - 1) % 26;
+    result = String.fromCharCode(65 + remainder) + result;
+    current = Math.floor((current - 1) / 26);
+  }
+
+  return result;
+}
+
+function buildWorksheetRow(rowNumber, values) {
+  const cells = values.map((cell, index) => {
+    const reference = `${getExcelColumnName(index + 1)}${rowNumber}`;
+
+    return buildWorksheetCell(reference, cell.value, cell.type, cell.styleIndex);
+  });
+
+  return `<row r="${rowNumber}">${cells.join("")}</row>`;
+}
+
+function encodeUtf8(value) {
+  return textEncoder.encode(value);
+}
+
+function createCrc32Table() {
+  const table = new Uint32Array(256);
+
+  for (let index = 0; index < 256; index += 1) {
+    let current = index;
+
+    for (let bit = 0; bit < 8; bit += 1) {
+      current = (current & 1) !== 0 ? 0xedb88320 ^ (current >>> 1) : current >>> 1;
+    }
+
+    table[index] = current >>> 0;
+  }
+
+  return table;
+}
+
+const crc32Table = createCrc32Table();
+
+function computeCrc32(bytes) {
+  let crc = 0xffffffff;
+
+  for (let index = 0; index < bytes.length; index += 1) {
+    crc = crc32Table[(crc ^ bytes[index]) & 0xff] ^ (crc >>> 8);
+  }
+
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function createZipDosDateTime(date = new Date()) {
+  const year = Math.max(1980, date.getFullYear());
+  const month = date.getMonth() + 1;
+  const day = date.getDate();
+  const hours = date.getHours();
+  const minutes = date.getMinutes();
+  const seconds = Math.floor(date.getSeconds() / 2);
+
+  const dosTime = (hours << 11) | (minutes << 5) | seconds;
+  const dosDate = ((year - 1980) << 9) | (month << 5) | day;
+
+  return { dosTime, dosDate };
+}
+
+function writeUint16(view, offset, value) {
+  view.setUint16(offset, value, true);
+}
+
+function writeUint32(view, offset, value) {
+  view.setUint32(offset, value >>> 0, true);
+}
+
+function concatenateUint8Arrays(parts) {
+  const totalLength = parts.reduce((sum, part) => sum + part.length, 0);
+  const result = new Uint8Array(totalLength);
+  let offset = 0;
+
+  parts.forEach((part) => {
+    result.set(part, offset);
+    offset += part.length;
+  });
+
+  return result;
+}
+
+function createZipEntry(name, data, localHeaderOffset, dosDateTime) {
+  const nameBytes = encodeUtf8(name);
+  const crc32 = computeCrc32(data);
+  const localHeader = new Uint8Array(30 + nameBytes.length);
+  const localHeaderView = new DataView(localHeader.buffer);
+
+  writeUint32(localHeaderView, 0, 0x04034b50);
+  writeUint16(localHeaderView, 4, 20);
+  writeUint16(localHeaderView, 6, 0);
+  writeUint16(localHeaderView, 8, 0);
+  writeUint16(localHeaderView, 10, dosDateTime.dosTime);
+  writeUint16(localHeaderView, 12, dosDateTime.dosDate);
+  writeUint32(localHeaderView, 14, crc32);
+  writeUint32(localHeaderView, 18, data.length);
+  writeUint32(localHeaderView, 22, data.length);
+  writeUint16(localHeaderView, 26, nameBytes.length);
+  writeUint16(localHeaderView, 28, 0);
+  localHeader.set(nameBytes, 30);
+
+  const centralHeader = new Uint8Array(46 + nameBytes.length);
+  const centralHeaderView = new DataView(centralHeader.buffer);
+
+  writeUint32(centralHeaderView, 0, 0x02014b50);
+  writeUint16(centralHeaderView, 4, 20);
+  writeUint16(centralHeaderView, 6, 20);
+  writeUint16(centralHeaderView, 8, 0);
+  writeUint16(centralHeaderView, 10, 0);
+  writeUint16(centralHeaderView, 12, dosDateTime.dosTime);
+  writeUint16(centralHeaderView, 14, dosDateTime.dosDate);
+  writeUint32(centralHeaderView, 16, crc32);
+  writeUint32(centralHeaderView, 20, data.length);
+  writeUint32(centralHeaderView, 24, data.length);
+  writeUint16(centralHeaderView, 28, nameBytes.length);
+  writeUint16(centralHeaderView, 30, 0);
+  writeUint16(centralHeaderView, 32, 0);
+  writeUint16(centralHeaderView, 34, 0);
+  writeUint16(centralHeaderView, 36, 0);
+  writeUint32(centralHeaderView, 38, 0);
+  writeUint32(centralHeaderView, 42, localHeaderOffset);
+  centralHeader.set(nameBytes, 46);
+
+  return {
+    localPart: concatenateUint8Arrays([localHeader, data]),
+    centralHeader,
+  };
+}
+
+function createZipArchive(files) {
+  const dosDateTime = createZipDosDateTime();
+  const localParts = [];
+  const centralHeaders = [];
+  let offset = 0;
+
+  files.forEach((file) => {
+    const entry = createZipEntry(file.name, file.data, offset, dosDateTime);
+    localParts.push(entry.localPart);
+    centralHeaders.push(entry.centralHeader);
+    offset += entry.localPart.length;
+  });
+
+  const centralDirectory = concatenateUint8Arrays(centralHeaders);
+  const endOfCentralDirectory = new Uint8Array(22);
+  const endView = new DataView(endOfCentralDirectory.buffer);
+
+  writeUint32(endView, 0, 0x06054b50);
+  writeUint16(endView, 4, 0);
+  writeUint16(endView, 6, 0);
+  writeUint16(endView, 8, files.length);
+  writeUint16(endView, 10, files.length);
+  writeUint32(endView, 12, centralDirectory.length);
+  writeUint32(endView, 16, offset);
+  writeUint16(endView, 20, 0);
+
+  return concatenateUint8Arrays([...localParts, centralDirectory, endOfCentralDirectory]);
+}
+
+function bytesToBase64(bytes) {
+  let binary = "";
+  const chunkSize = 0x8000;
+
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+  }
+
+  return btoa(binary);
+}
+
+function buildWorksheetXml(report) {
+  const currencyCode = report.currencyCode || getAccountCurrencyCode(report.accountNo);
+  const worksheetName = sanitizeWorksheetName(`Account ${report.accountNo}`);
+  let rowNumber = 1;
+  const summaryRows = [
+    ["Account", report.accountNo || ""],
+    ["Currency", currencyCode || ""],
+    ["Client Search", report.clientSearch || ""],
+    ["From", report.from || ""],
+    ["To", report.to || ""],
+    ["Displayed Rows", report.summary?.displayedCount ?? 0],
+    ["Matched Rows", report.summary?.totalCount ?? 0],
+    ["Total Amount", report.summary?.totalAmount ?? 0],
+    ["Total Amount with VAT", report.summary?.totalAmountTimes1_2 ?? 0],
+    ["Matched Clients", (report.summary?.matchedClients || []).join(", ")],
+    ["Generated At", new Date().toISOString()],
+  ];
+  const rows = [];
+
+  summaryRows.forEach(([label, value]) => {
+    rows.push(
+      buildWorksheetRow(rowNumber, [
+        { value: label, type: "String", styleIndex: 3 },
+        { value, type: typeof value === "number" ? "Number" : "String", styleIndex: typeof value === "number" ? 2 : 0 },
+      ])
+    );
+    rowNumber += 1;
+  });
+
+  rowNumber += 1;
+  rows.push(
+    buildWorksheetRow(
+      rowNumber,
+      EXPORT_COLUMNS.map((column) => ({
+        value:
+          column.key === "amount" || column.key === "amountTimes1_2"
+            ? buildAmountLabel(column.label, currencyCode)
+            : column.label,
+        type: "String",
+        styleIndex: 1,
+      }))
+    )
+  );
+  rowNumber += 1;
+
+  (report.rows || []).forEach((row) => {
+    rows.push(
+      buildWorksheetRow(
+        rowNumber,
+        EXPORT_COLUMNS.map((column) => ({
+          value: row[column.key],
+          type: column.type,
+          styleIndex: column.type === "Number" ? 2 : 0,
+        }))
+      )
+    );
+    rowNumber += 1;
+  });
+
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <dimension ref="A1:I${Math.max(1, rowNumber - 1)}"/>
+  <sheetViews>
+    <sheetView workbookViewId="0"/>
+  </sheetViews>
+  <sheetFormatPr defaultRowHeight="15"/>
+  <cols>
+    <col min="1" max="1" width="14" customWidth="1"/>
+    <col min="2" max="2" width="14" customWidth="1"/>
+    <col min="3" max="4" width="18" customWidth="1"/>
+    <col min="5" max="5" width="16" customWidth="1"/>
+    <col min="6" max="6" width="42" customWidth="1"/>
+    <col min="7" max="7" width="28" customWidth="1"/>
+    <col min="8" max="9" width="16" customWidth="1"/>
+  </cols>
+  <sheetData>
+    ${rows.join("")}
+  </sheetData>
+</worksheet>`;
+}
+
+function buildWorkbookXml(sheetName) {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets>
+    <sheet name="${escapeXml(sheetName)}" sheetId="1" r:id="rId1"/>
+  </sheets>
+</workbook>`;
+}
+
+function buildWorkbookRelsXml() {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+</Relationships>`;
+}
+
+function buildRootRelsXml() {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>`;
+}
+
+function buildContentTypesXml() {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+  <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+</Types>`;
+}
+
+function buildStylesXml() {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <fonts count="2">
+    <font>
+      <sz val="11"/>
+      <name val="Calibri"/>
+      <family val="2"/>
+    </font>
+    <font>
+      <b/>
+      <sz val="11"/>
+      <name val="Calibri"/>
+      <family val="2"/>
+    </font>
+  </fonts>
+  <fills count="3">
+    <fill><patternFill patternType="none"/></fill>
+    <fill><patternFill patternType="gray125"/></fill>
+    <fill>
+      <patternFill patternType="solid">
+        <fgColor rgb="FFD9EFEA"/>
+        <bgColor indexed="64"/>
+      </patternFill>
+    </fill>
+  </fills>
+  <borders count="1">
+    <border>
+      <left/>
+      <right/>
+      <top/>
+      <bottom/>
+      <diagonal/>
+    </border>
+  </borders>
+  <cellStyleXfs count="1">
+    <xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>
+  </cellStyleXfs>
+  <cellXfs count="4">
+    <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+    <xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/>
+    <xf numFmtId="2" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
+    <xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>
+  </cellXfs>
+  <cellStyles count="1">
+    <cellStyle name="Normal" xfId="0" builtinId="0"/>
+  </cellStyles>
+</styleSheet>`;
+}
+
+function buildExcelWorkbookBase64(report) {
+  const sheetName = sanitizeWorksheetName(`Account ${report.accountNo}`);
+  const files = [
+    { name: "[Content_Types].xml", data: encodeUtf8(buildContentTypesXml()) },
+    { name: "_rels/.rels", data: encodeUtf8(buildRootRelsXml()) },
+    { name: "xl/workbook.xml", data: encodeUtf8(buildWorkbookXml(sheetName)) },
+    { name: "xl/_rels/workbook.xml.rels", data: encodeUtf8(buildWorkbookRelsXml()) },
+    { name: "xl/styles.xml", data: encodeUtf8(buildStylesXml()) },
+    { name: "xl/worksheets/sheet1.xml", data: encodeUtf8(buildWorksheetXml(report)) },
+  ];
+
+  return bytesToBase64(createZipArchive(files));
+}
+
 function renderReportSections(reports) {
   reportSectionsElement.innerHTML = reports
     .map((report) => {
@@ -152,7 +568,16 @@ function renderReportSections(reports) {
                 ${currencyCode ? `<span class="currency-badge">${escapeHtml(currencyCode)}</span>` : ""}
               </div>
             </div>
-            <p class="account-report-caption">${escapeHtml(buildSectionCaption(report))}</p>
+            <div class="account-report-actions">
+              <p class="account-report-caption">${escapeHtml(buildSectionCaption(report))}</p>
+              <button
+                type="button"
+                class="export-button"
+                data-export-account="${escapeHtml(report.accountNo)}"
+                ${report.loaded ? "" : "disabled"}>
+                Download Excel
+              </button>
+            </div>
           </div>
 
           <div class="summary-grid">${renderSummaryHtml(report.summary, currencyCode)}</div>
@@ -234,11 +659,13 @@ form.addEventListener("submit", async (event) => {
     }));
     const totalDisplayedRows = reports.reduce((sum, report) => sum + (report.summary.displayedCount || 0), 0);
 
+    currentReports = reports;
     renderReportSections(reports);
     resultsCaptionElement.textContent = buildResultsCaption(requestPayload);
     setStatus(`Loaded ${totalDisplayedRows} row(s) across ${reports.length} account table(s).`);
   } catch (error) {
-    renderReportSections(REPORT_ACCOUNTS.map(buildEmptyReport));
+    currentReports = REPORT_ACCOUNTS.map(buildEmptyReport);
+    renderReportSections(currentReports);
     resultsCaptionElement.textContent = "No report loaded.";
     setError(error.message);
     setStatus("Request failed.");
@@ -247,4 +674,48 @@ form.addEventListener("submit", async (event) => {
   }
 });
 
-renderReportSections(REPORT_ACCOUNTS.map(buildEmptyReport));
+reportSectionsElement.addEventListener("click", async (event) => {
+  const exportButton = event.target.closest("[data-export-account]");
+
+  if (!exportButton) {
+    return;
+  }
+
+  const accountNo = exportButton.dataset.exportAccount;
+  const report = currentReports.find((item) => String(item.accountNo) === String(accountNo));
+
+  if (!report) {
+    setError(`Could not find loaded data for account ${accountNo}.`);
+    setStatus("Export failed.");
+    return;
+  }
+
+  exportButton.disabled = true;
+  setError("");
+  setStatus(`Preparing Excel export for account ${accountNo}...`);
+
+  try {
+    const response = await window.ledgerApp.saveExport({
+      suggestedName: buildExportFileName(report),
+      contentBase64: buildExcelWorkbookBase64(report),
+    });
+
+    if (!response.ok) {
+      if (response.canceled) {
+        setStatus(`Export canceled for account ${accountNo}.`);
+        return;
+      }
+
+      throw new Error(response.error || "Could not save export.");
+    }
+
+    setStatus(`Saved Excel export for account ${accountNo} to ${response.filePath}.`);
+  } catch (error) {
+    setError(error.message);
+    setStatus("Export failed.");
+  } finally {
+    exportButton.disabled = false;
+  }
+});
+
+renderReportSections(currentReports);

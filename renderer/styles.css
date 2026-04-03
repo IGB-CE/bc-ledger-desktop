@@ -283,6 +283,14 @@ button:disabled {
   align-items: end;
 }
 
+.account-report-actions {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
 .account-report-header h3 {
   font-size: 2rem;
   line-height: 1;
@@ -320,6 +328,20 @@ button:disabled {
   margin: 0;
   color: var(--muted);
   line-height: 1.5;
+}
+
+.export-button {
+  margin-top: 0;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: rgba(15, 118, 110, 0.12);
+  color: var(--accent-strong);
+  border-color: rgba(15, 118, 110, 0.18);
+  box-shadow: none;
+}
+
+.export-button:hover:enabled {
+  background: rgba(15, 118, 110, 0.18);
 }
 
 .account-report .summary-grid {
@@ -399,6 +421,12 @@ tbody tr:hover {
   }
 
   .account-report-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .account-report-actions {
+    width: 100%;
     align-items: flex-start;
     flex-direction: column;
   }

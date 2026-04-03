@@ -1,5 +1,6 @@
 const path = require("path");
-const { app, BrowserWindow, ipcMain, screen } = require("electron");
+const fs = require("fs/promises");
+const { app, BrowserWindow, dialog, ipcMain, screen } = require("electron");
 const { buildLedgerReport } = require("../src/ledger-service");
 
 function createWindow() {
@@ -28,6 +29,36 @@ app.whenReady().then(() => {
     try {
       const report = await buildLedgerReport(options || {});
       return { ok: true, report };
+    } catch (error) {
+      return { ok: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle("ledger:save-export", async (_event, payload) => {
+    try {
+      const suggestedName = String(payload?.suggestedName || "ledger-export.xlsx").trim() || "ledger-export.xlsx";
+      const content = String(payload?.content || "");
+      const contentBase64 = String(payload?.contentBase64 || "");
+      const result = await dialog.showSaveDialog({
+        title: "Save Excel Export",
+        defaultPath: suggestedName,
+        filters: [
+          { name: "Excel Workbook", extensions: ["xlsx"] },
+          { name: "All Files", extensions: ["*"] },
+        ],
+      });
+
+      if (result.canceled || !result.filePath) {
+        return { ok: false, canceled: true };
+      }
+
+      if (contentBase64) {
+        await fs.writeFile(result.filePath, Buffer.from(contentBase64, "base64"));
+      } else {
+        await fs.writeFile(result.filePath, content, "utf8");
+      }
+
+      return { ok: true, filePath: result.filePath };
     } catch (error) {
       return { ok: false, error: error.message };
     }
