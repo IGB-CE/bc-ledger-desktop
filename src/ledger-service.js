@@ -12,6 +12,7 @@ const ACCOUNT_REPORT_CONFIG = {
     amountField: "Additional_Currency_Amount",
   },
 };
+const DEFAULT_REPORT_ACCOUNTS = ["4092", "4091"];
 
 function normalizeString(value) {
   return String(value || "").trim();
@@ -103,6 +104,13 @@ function normalizeTop(value) {
   return parsed;
 }
 
+function normalizeAccountNumbers(accountNos) {
+  const values = Array.isArray(accountNos) ? accountNos : [accountNos];
+  const normalized = [...new Set(values.map((value) => normalizeString(value)).filter(Boolean))];
+
+  return normalized.length > 0 ? normalized : [config.accountNo];
+}
+
 function buildDateClauses(fieldName, from, to) {
   const clauses = [];
 
@@ -133,6 +141,28 @@ async function fetchLedgerRows({ accountNo, from, to, documentNumbers = [] }) {
     filter: buildLedgerFilter({ accountNo, from, to, documentNumbers }),
     select: ["Entry_No", "Posting_Date", "Document_Date", "Document_No", "Document_Type", "Amount", "Additional_Currency_Amount"],
   });
+}
+
+async function fetchLedgerRowsForDocumentNumbers({ accountNo, from, to, documentNumbers }) {
+  if (!documentNumbers || documentNumbers.length === 0) {
+    return [];
+  }
+
+  const documentChunks = chunkArray(documentNumbers, 20);
+  const ledgerRows = [];
+
+  for (const chunk of documentChunks) {
+    const chunkRows = await fetchLedgerRows({
+      accountNo,
+      from,
+      to,
+      documentNumbers: chunk,
+    });
+
+    ledgerRows.push(...chunkRows);
+  }
+
+  return ledgerRows;
 }
 
 async function fetchFallbackCustomerMap(documentNumbers) {
@@ -375,19 +405,12 @@ async function fetchLedgerRowsForClient({ accountNo, clientSearch, from, to }) {
     };
   }
 
-  const documentChunks = chunkArray(documentNumbers, 20);
-  const ledgerRows = [];
-
-  for (const chunk of documentChunks) {
-    const chunkRows = await fetchLedgerRows({
-      accountNo,
-      from,
-      to,
-      documentNumbers: chunk,
-    });
-
-    ledgerRows.push(...chunkRows);
-  }
+  const ledgerRows = await fetchLedgerRowsForDocumentNumbers({
+    accountNo,
+    from,
+    to,
+    documentNumbers,
+  });
 
   return {
     nameMap: documentNameMap,
@@ -439,32 +462,8 @@ function buildSummary(allReportRows, displayedRows) {
   };
 }
 
-async function buildLedgerReport(options = {}) {
-  const accountNo = normalizeString(options.accountNo) || config.accountNo;
+async function buildLedgerReportFromRows({ accountNo, clientSearch, from, to, top, ledgerRows, nameMap }) {
   const accountReportConfig = getAccountReportConfig(accountNo);
-  const clientSearch = normalizeString(options.clientSearch);
-  const from = normalizeString(options.from);
-  const to = normalizeString(options.to);
-  const top = normalizeTop(options.top);
-  let nameMap;
-  let ledgerRows;
-
-  if (clientSearch) {
-    const result = await fetchLedgerRowsForClient({ accountNo, clientSearch, from, to });
-    nameMap = result.nameMap;
-    ledgerRows = result.rows;
-  } else {
-    if (!from || !to) {
-      throw new Error("Use client search, or provide both from and to dates.");
-    }
-
-    ledgerRows = await fetchLedgerRows({ accountNo, from, to });
-    const documentNumbers = ledgerRows.map((row) => row.Document_No);
-    const documentNameMap = await fetchDocumentNameMap(documentNumbers);
-    const fallbackCustomerMap = await fetchFallbackCustomerMap(documentNumbers);
-    nameMap = mergeMaps(documentNameMap, fallbackCustomerMap);
-  }
-
   const sortedRows = sortLedgerRows(ledgerRows);
   const documentNumbers = sortedRows.map((row) => row.Document_No);
   const documentLineDescriptionMap = await fetchDocumentLineDescriptionMap(documentNumbers);
@@ -491,6 +490,86 @@ async function buildLedgerReport(options = {}) {
   };
 }
 
+async function buildLedgerReport(options = {}) {
+  const accountNo = normalizeString(options.accountNo) || config.accountNo;
+  const clientSearch = normalizeString(options.clientSearch);
+  const from = normalizeString(options.from);
+  const to = normalizeString(options.to);
+  const top = normalizeTop(options.top);
+  let nameMap;
+  let ledgerRows;
+
+  if (clientSearch) {
+    const result = await fetchLedgerRowsForClient({ accountNo, clientSearch, from, to });
+    nameMap = result.nameMap;
+    ledgerRows = result.rows;
+  } else {
+    if (!from || !to) {
+      throw new Error("Use client search, or provide both from and to dates.");
+    }
+
+    ledgerRows = await fetchLedgerRows({ accountNo, from, to });
+    const documentNumbers = ledgerRows.map((row) => row.Document_No);
+    const documentNameMap = await fetchDocumentNameMap(documentNumbers);
+    const fallbackCustomerMap = await fetchFallbackCustomerMap(documentNumbers);
+    nameMap = mergeMaps(documentNameMap, fallbackCustomerMap);
+  }
+
+  return buildLedgerReportFromRows({
+    accountNo,
+    clientSearch,
+    from,
+    to,
+    top,
+    ledgerRows,
+    nameMap,
+  });
+}
+
+async function buildLedgerReports(options = {}) {
+  const accountNos = normalizeAccountNumbers(options.accountNos || DEFAULT_REPORT_ACCOUNTS);
+  const clientSearch = normalizeString(options.clientSearch);
+  const from = normalizeString(options.from);
+  const to = normalizeString(options.to);
+  const top = normalizeTop(options.top);
+
+  if (clientSearch) {
+    const documentNameMap = await fetchMatchingDocumentNameMap({ clientSearch, from, to });
+    const documentNumbers = [...documentNameMap.keys()];
+
+    return Promise.all(
+      accountNos.map(async (accountNo) => {
+        const ledgerRows = await fetchLedgerRowsForDocumentNumbers({
+          accountNo,
+          from,
+          to,
+          documentNumbers,
+        });
+
+        return buildLedgerReportFromRows({
+          accountNo,
+          clientSearch,
+          from,
+          to,
+          top,
+          ledgerRows,
+          nameMap: documentNameMap,
+        });
+      })
+    );
+  }
+
+  return Promise.all(
+    accountNos.map((accountNo) =>
+      buildLedgerReport({
+        ...options,
+        accountNo,
+      })
+    )
+  );
+}
+
 module.exports = {
   buildLedgerReport,
+  buildLedgerReports,
 };

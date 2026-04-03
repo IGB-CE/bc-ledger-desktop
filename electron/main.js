@@ -1,7 +1,7 @@
 const path = require("path");
 const fs = require("fs/promises");
 const { app, BrowserWindow, dialog, ipcMain, screen } = require("electron");
-const { buildLedgerReport } = require("../src/ledger-service");
+const { buildLedgerReport, buildLedgerReports } = require("../src/ledger-service");
 
 function createWindow() {
   const { workAreaSize } = screen.getPrimaryDisplay();
@@ -29,6 +29,15 @@ app.whenReady().then(() => {
     try {
       const report = await buildLedgerReport(options || {});
       return { ok: true, report };
+    } catch (error) {
+      return { ok: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle("ledger:run-reports", async (_event, options) => {
+    try {
+      const reports = await buildLedgerReports(options || {});
+      return { ok: true, reports };
     } catch (error) {
       return { ok: false, error: error.message };
     }

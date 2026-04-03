@@ -655,17 +655,17 @@ form.addEventListener("submit", async (event) => {
 
   try {
     const requestPayload = buildRequestPayload();
-    const responses = await Promise.all(
-      REPORT_ACCOUNTS.map((accountNo) => window.ledgerApp.runReport({ ...requestPayload, accountNo }))
-    );
-    const failedResponse = responses.find((response) => !response.ok);
+    const response = await window.ledgerApp.runReports({
+      ...requestPayload,
+      accountNos: REPORT_ACCOUNTS,
+    });
 
-    if (failedResponse) {
-      throw new Error(failedResponse.error || "Unknown error.");
+    if (!response.ok) {
+      throw new Error(response.error || "Unknown error.");
     }
 
-    const reports = responses.map((response) => ({
-      ...response.report,
+    const reports = (response.reports || []).map((report) => ({
+      ...report,
       loaded: true,
     }));
     const totalDisplayedRows = reports.reduce((sum, report) => sum + (report.summary.displayedCount || 0), 0);
