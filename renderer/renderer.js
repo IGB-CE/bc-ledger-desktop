@@ -14,17 +14,6 @@ const resultsLoadingElement = document.getElementById("results-loading");
 const resultsLoadingMessageElement = document.getElementById("results-loading-message");
 const reportSectionsElement = document.getElementById("report-sections");
 const REPORT_ACCOUNTS = ["4092", "4091"];
-const EXPORT_COLUMNS = [
-  { key: "postingDate", label: "Posting Date", type: "String" },
-  { key: "documentDate", label: "Document Date", type: "String" },
-  { key: "documentNo", label: "Document No", type: "String" },
-  { key: "documentFiscalNo", label: "Document No. Fiscal", type: "String" },
-  { key: "documentType", label: "Document Type", type: "String" },
-  { key: "glDescription", label: "G/L Description", type: "String" },
-  { key: "clientName", label: "Client Name", type: "String" },
-  { key: "amount", label: "Amount", type: "Number" },
-  { key: "amountTimes1_2", label: "Amount with VAT", type: "Number" },
-];
 const ACCOUNT_CURRENCY_BY_NO = {
   "4092": "ALL",
   "4091": "EUR",
@@ -116,13 +105,62 @@ function buildAmountLabel(label, currencyCode) {
   return currencyCode ? `${label} (${currencyCode})` : label;
 }
 
-function renderSummaryHtml(summary, currencyCode) {
+function getReportColumns(report) {
+  const baseColumns = [
+    { key: "postingDate", label: "Date", type: "String", align: "left" },
+    { key: "documentDate", label: "Doc Date", type: "String", align: "left" },
+    { key: "documentNo", label: "Doc No", type: "String", align: "left" },
+    { key: "documentFiscalNo", label: "Fiscal", type: "String", align: "left" },
+    { key: "documentType", label: "Type", type: "String", align: "left" },
+    { key: "glDescription", label: "G/L Description", type: "String", align: "left" },
+    { key: "clientName", label: "Client", type: "String", align: "left" },
+  ];
+
+  if (String(report?.accountNo || "") === "4091") {
+    return [
+      ...baseColumns,
+      { key: "amount", label: "Lek", type: "Number", align: "right", currencyCode: "ALL" },
+      { key: "additionalCurrencyAmount", label: "EUR", type: "Number", align: "right", currencyCode: "EUR" },
+      { key: "amountTimes1_2", label: "Lek + VAT", type: "Number", align: "right", currencyCode: "ALL" },
+      {
+        key: "additionalCurrencyAmountTimes1_2",
+        label: "EUR + VAT",
+        type: "Number",
+        align: "right",
+        currencyCode: "EUR",
+      },
+    ];
+  }
+
+  const currencyCode = report?.currencyCode || getAccountCurrencyCode(report?.accountNo);
+  return [
+    ...baseColumns,
+    { key: "amount", label: "Amount", type: "Number", align: "right", currencyCode },
+    { key: "amountTimes1_2", label: "With VAT", type: "Number", align: "right", currencyCode },
+  ];
+}
+
+function renderSummaryHtml(report) {
+  const summary = report.summary || {};
+  const currencyCode = report.currencyCode || getAccountCurrencyCode(report.accountNo);
   const items = [
     { label: "Matched rows", value: summary.totalCount ?? 0 },
     { label: "Displayed rows", value: summary.displayedCount ?? 0 },
-    { label: buildAmountLabel("Total amount", currencyCode), value: formatAmount(summary.totalAmount) },
-    { label: buildAmountLabel("Total with VAT", currencyCode), value: formatAmount(summary.totalAmountTimes1_2) },
   ];
+
+  if (String(report.accountNo || "") === "4091") {
+    items.push(
+      { label: "Lek total (ALL)", value: formatAmount(summary.totalAmount) },
+      { label: "EUR total", value: formatAmount(summary.totalAdditionalCurrencyAmount) },
+      { label: "Lek + VAT (ALL)", value: formatAmount(summary.totalAmountTimes1_2) },
+      { label: "EUR + VAT", value: formatAmount(summary.totalAdditionalCurrencyAmountTimes1_2) }
+    );
+  } else {
+    items.push(
+      { label: buildAmountLabel("Total amount", currencyCode), value: formatAmount(summary.totalAmount) },
+      { label: buildAmountLabel("With VAT", currencyCode), value: formatAmount(summary.totalAmountTimes1_2) }
+    );
+  }
 
   return items
     .map(
@@ -150,29 +188,41 @@ function renderMatchedClientsHtml(report) {
   `;
 }
 
-function renderRowsHtml(rows, loaded) {
+function renderRowsHtml(report) {
+  const rows = report.rows || [];
+  const columns = getReportColumns(report);
+
   if (!rows || rows.length === 0) {
-    const message = loaded ? "No rows matched the current request." : "Run a report to see rows here.";
-    return `<tr><td colspan="9" class="empty-state">${message}</td></tr>`;
+    const message = report.loaded ? "No rows matched the current request." : "Run a report to see rows here.";
+    return `<tr><td colspan="${columns.length}" class="empty-state">${message}</td></tr>`;
   }
 
   return rows
     .map(
       (row) => `
         <tr>
-          <td>${escapeHtml(row.postingDate)}</td>
-          <td>${escapeHtml(row.documentDate)}</td>
-          <td>${escapeHtml(row.documentNo)}</td>
-          <td>${escapeHtml(row.documentFiscalNo)}</td>
-          <td>${escapeHtml(row.documentType)}</td>
-          <td class="detail-cell">${escapeHtml(row.glDescription)}</td>
-          <td>${escapeHtml(row.clientName)}</td>
-          <td class="numeric">${formatAmount(row.amount)}</td>
-          <td class="numeric">${formatAmount(row.amountTimes1_2)}</td>
+          ${columns
+            .map((column) => {
+              const value = column.type === "Number" ? formatAmount(row[column.key]) : escapeHtml(row[column.key]);
+              const className = [column.align === "right" ? "numeric" : "", column.key === "glDescription" ? "detail-cell" : ""]
+                .filter(Boolean)
+                .join(" ");
+              return `<td${className ? ` class="${className}"` : ""}>${value}</td>`;
+            })
+            .join("")}
         </tr>
       `
     )
     .join("");
+}
+
+function renderColumnGroupHtml(report) {
+  const isEurAccount = String(report.accountNo || "") === "4091";
+  const widths = isEurAccount
+    ? ["6%", "6%", "7%", "6%", "5%", "21%", "8%", "8.5%", "8.5%", "12%", "12%"]
+    : ["6%", "7%", "7%", "6%", "5%", "29%", "10%", "15%", "15%"];
+
+  return `<colgroup>${widths.map((width) => `<col style="width: ${width}" />`).join("")}</colgroup>`;
 }
 
 function buildResultsCaption({ clientSearch, from, to }) {
@@ -420,7 +470,8 @@ function bytesToBase64(bytes) {
 
 function buildWorksheetXml(report) {
   const currencyCode = report.currencyCode || getAccountCurrencyCode(report.accountNo);
-  const worksheetName = sanitizeWorksheetName(`Account ${report.accountNo}`);
+  const exportColumns = getReportColumns(report);
+  const lastColumnName = getExcelColumnName(Math.max(1, exportColumns.length));
   let rowNumber = 1;
   const summaryRows = [
     ["Account", report.accountNo || ""],
@@ -430,8 +481,17 @@ function buildWorksheetXml(report) {
     ["To", report.to || ""],
     ["Displayed Rows", report.summary?.displayedCount ?? 0],
     ["Matched Rows", report.summary?.totalCount ?? 0],
-    ["Total Amount", report.summary?.totalAmount ?? 0],
-    ["Total Amount with VAT", report.summary?.totalAmountTimes1_2 ?? 0],
+    ...(String(report.accountNo || "") === "4091"
+      ? [
+          ["Total Value in lek", report.summary?.totalAmount ?? 0],
+          ["Total Value in euro", report.summary?.totalAdditionalCurrencyAmount ?? 0],
+          ["Total Value with VAT in lek", report.summary?.totalAmountTimes1_2 ?? 0],
+          ["Total Value with VAT in euro", report.summary?.totalAdditionalCurrencyAmountTimes1_2 ?? 0],
+        ]
+      : [
+          ["Total Amount", report.summary?.totalAmount ?? 0],
+          ["Total Amount with VAT", report.summary?.totalAmountTimes1_2 ?? 0],
+        ]),
     ["Matched Clients", (report.summary?.matchedClients || []).join(", ")],
     ["Generated At", new Date().toISOString()],
   ];
@@ -451,11 +511,8 @@ function buildWorksheetXml(report) {
   rows.push(
     buildWorksheetRow(
       rowNumber,
-      EXPORT_COLUMNS.map((column) => ({
-        value:
-          column.key === "amount" || column.key === "amountTimes1_2"
-            ? buildAmountLabel(column.label, currencyCode)
-            : column.label,
+      exportColumns.map((column) => ({
+        value: column.type === "Number" && column.currencyCode ? buildAmountLabel(column.label, column.currencyCode) : column.label,
         type: "String",
         styleIndex: 1,
       }))
@@ -467,7 +524,7 @@ function buildWorksheetXml(report) {
     rows.push(
       buildWorksheetRow(
         rowNumber,
-        EXPORT_COLUMNS.map((column) => ({
+        exportColumns.map((column) => ({
           value: row[column.key],
           type: column.type,
           styleIndex: column.type === "Number" ? 2 : 0,
@@ -479,7 +536,7 @@ function buildWorksheetXml(report) {
 
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-  <dimension ref="A1:I${Math.max(1, rowNumber - 1)}"/>
+  <dimension ref="A1:${lastColumnName}${Math.max(1, rowNumber - 1)}"/>
   <sheetViews>
     <sheetView workbookViewId="0"/>
   </sheetViews>
@@ -491,7 +548,7 @@ function buildWorksheetXml(report) {
     <col min="5" max="5" width="16" customWidth="1"/>
     <col min="6" max="6" width="42" customWidth="1"/>
     <col min="7" max="7" width="28" customWidth="1"/>
-    <col min="8" max="9" width="16" customWidth="1"/>
+    <col min="8" max="${exportColumns.length}" width="16" customWidth="1"/>
   </cols>
   <sheetData>
     ${rows.join("")}
@@ -602,6 +659,7 @@ function renderReportSections(reports) {
   reportSectionsElement.innerHTML = reports
     .map((report) => {
       const currencyCode = report.currencyCode || getAccountCurrencyCode(report.accountNo);
+      const columns = getReportColumns(report);
 
       return `
         <section class="account-report">
@@ -625,26 +683,27 @@ function renderReportSections(reports) {
             </div>
           </div>
 
-          <div class="summary-grid">${renderSummaryHtml(report.summary, currencyCode)}</div>
+          <div class="summary-grid">${renderSummaryHtml(report)}</div>
           ${renderMatchedClientsHtml(report)}
 
           <div class="table-wrap">
-            <table>
+            <table class="${String(report.accountNo || "") === "4091" ? "wide-ledger-table" : "standard-ledger-table"}">
+              ${renderColumnGroupHtml(report)}
               <thead>
                 <tr>
-                  <th>Posting Date</th>
-                  <th>Document Date</th>
-                  <th>Document No</th>
-                  <th>Document No. Fiscal</th>
-                  <th>Document Type</th>
-                  <th>G/L Description</th>
-                  <th>Client Name</th>
-                  <th>${escapeHtml(buildAmountLabel("Amount", currencyCode))}</th>
-                  <th>${escapeHtml(buildAmountLabel("Amount with VAT", currencyCode))}</th>
+                  ${columns
+                    .map((column) => {
+                      const label =
+                        column.type === "Number" && column.currencyCode
+                          ? buildAmountLabel(column.label, column.currencyCode)
+                          : column.label;
+                      return `<th${column.align === "right" ? ' class="numeric"' : ""}>${escapeHtml(label)}</th>`;
+                    })
+                    .join("")}
                 </tr>
               </thead>
               <tbody>
-                ${renderRowsHtml(report.rows, report.loaded)}
+                ${renderRowsHtml(report)}
               </tbody>
             </table>
           </div>
@@ -665,7 +724,9 @@ function buildEmptyReport(accountNo) {
       displayedCount: 0,
       matchedClients: [],
       totalAmount: 0,
+      totalAdditionalCurrencyAmount: 0,
       totalAmountTimes1_2: 0,
+      totalAdditionalCurrencyAmountTimes1_2: 0,
     },
   };
 }

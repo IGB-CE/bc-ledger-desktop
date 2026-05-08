@@ -5,11 +5,9 @@ const GL_DESCRIPTION_ACCOUNT_NUMBERS = ["4091", "4092"];
 const ACCOUNT_REPORT_CONFIG = {
   "4092": {
     currencyCode: "ALL",
-    amountField: "Amount",
   },
   "4091": {
     currencyCode: "EUR",
-    amountField: "Additional_Currency_Amount",
   },
 };
 const DEFAULT_REPORT_ACCOUNTS = ["4092", "4091"];
@@ -307,9 +305,9 @@ async function fetchDocumentFiscalNoMap(documentNumbers, signal) {
   return new Map([...invoiceMap, ...creditMemoMap]);
 }
 
-function buildDocumentLineFilter(documentNumbers) {
+function buildDocumentLineFilter(documentNumbers, accountNos = GL_DESCRIPTION_ACCOUNT_NUMBERS) {
   const documentFilter = buildOrFilter("Document_No", documentNumbers);
-  const accountFilter = buildOrFilter("No", GL_DESCRIPTION_ACCOUNT_NUMBERS);
+  const accountFilter = buildOrFilter("No", accountNos);
 
   if (!documentFilter || !accountFilter) {
     return "";
@@ -322,32 +320,88 @@ function extractDocumentLineDescription(row) {
   return normalizeString(row.Long_Description) || normalizeString(row.Description_2) || normalizeString(row.Description);
 }
 
-async function fetchDocumentLineDescriptionMapForEntity(entity, documentNumbers, select, signal) {
+function getDocumentLineAmountIncludingVat(row) {
+  const amount = Number(
+    row.Amount_Including_VAT ??
+      row.Total_Amount_Incl_VAT ??
+      row.amountIncludingVAT ??
+      row.totalAmountIncludingVAT
+  );
+
+  if (Number.isFinite(amount)) {
+    return roundToTwo(amount);
+  }
+
+  const lineAmount = Number(row.Line_Amount ?? row.Amount);
+  return Number.isFinite(lineAmount) ? roundToTwo(lineAmount) : null;
+}
+
+async function fetchDocumentLines(entity, { filter, select, signal }) {
+  const selectAttempts = [
+    [select, "Amount_Including_VAT", "Total_Amount_Incl_VAT", "Line_Amount", "Amount"].join(","),
+    [select, "Line_Amount", "Amount"].join(","),
+    [select, "Line_Amount"].join(","),
+    select,
+  ];
+
+  let lastError = null;
+  for (const selectAttempt of selectAttempts) {
+    try {
+      return await fetchAllEntity(entity, {
+        filter,
+        select: selectAttempt,
+        signal,
+      });
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError || new Error(`Failed to fetch ${entity} lines.`);
+}
+
+async function fetchDocumentLineDescriptionMapForEntity(entity, documentNumbers, select, accountNos, signal) {
   const result = new Map();
   const uniqueDocumentNumbers = [...new Set(documentNumbers)];
   const chunks = chunkArray(uniqueDocumentNumbers, 20);
 
   for (const chunk of chunks) {
-    const filter = buildDocumentLineFilter(chunk);
+    const filter = buildDocumentLineFilter(chunk, accountNos);
 
     if (!filter) {
       continue;
     }
 
-    const rows = await fetchAllEntity(entity, {
+    const rows = await fetchDocumentLines(entity, {
       filter,
       select,
       signal,
     });
+    const accountNoSet = new Set((accountNos || GL_DESCRIPTION_ACCOUNT_NUMBERS).map((value) => normalizeString(value)));
 
     rows
-      .filter((row) => row.Document_No)
+      .filter((row) => row.Document_No && accountNoSet.has(normalizeString(row.No)))
       .sort((left, right) => Number(left.Line_No || 0) - Number(right.Line_No || 0))
       .forEach((row) => {
         const description = extractDocumentLineDescription(row);
 
-        if (description && !result.has(row.Document_No)) {
-          result.set(row.Document_No, description);
+        if (!description) {
+          return;
+        }
+
+        const line = {
+          description,
+          amountIncludingVat: getDocumentLineAmountIncludingVat(row),
+        };
+        const existingLines = result.get(row.Document_No) || [];
+        const alreadyExists = existingLines.some(
+          (existingLine) =>
+            existingLine.description === line.description &&
+            existingLine.amountIncludingVat === line.amountIncludingVat
+        );
+
+        if (!alreadyExists) {
+          result.set(row.Document_No, [...existingLines, line]);
         }
       });
   }
@@ -355,7 +409,8 @@ async function fetchDocumentLineDescriptionMapForEntity(entity, documentNumbers,
   return result;
 }
 
-async function fetchDocumentLineDescriptionMap(documentNumbers, signal) {
+async function fetchDocumentLineDescriptionMap(documentNumbers, accountNo, signal) {
+  const accountNos = normalizeString(accountNo) ? [normalizeString(accountNo)] : GL_DESCRIPTION_ACCOUNT_NUMBERS;
   const invoiceMap = await fetchDocumentLineDescriptionMapForEntity("PostedSalesInvoiceSalesInvLines", documentNumbers, [
     "Document_No",
     "Line_No",
@@ -364,7 +419,7 @@ async function fetchDocumentLineDescriptionMap(documentNumbers, signal) {
     "Long_Description",
     "Description_2",
     "Description",
-  ], signal);
+  ], accountNos, signal);
   const creditMemoMap = await fetchDocumentLineDescriptionMapForEntity("PSCM_Lines", documentNumbers, [
     "Document_No",
     "Line_No",
@@ -372,9 +427,15 @@ async function fetchDocumentLineDescriptionMap(documentNumbers, signal) {
     "No",
     "Description_2",
     "Description",
-  ], signal);
+  ], accountNos, signal);
 
-  return new Map([...invoiceMap, ...creditMemoMap]);
+  const result = new Map([...invoiceMap]);
+  for (const [documentNo, lines] of creditMemoMap) {
+    const existingLines = result.get(documentNo) || [];
+    result.set(documentNo, [...existingLines, ...lines]);
+  }
+
+  return result;
 }
 
 function mergeMaps(primaryMap, fallbackMap) {
@@ -391,6 +452,16 @@ function mergeMaps(primaryMap, fallbackMap) {
 
 function roundToTwo(value) {
   return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+}
+
+function formatLineAmount(value) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return "";
+
+  return amount.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 }
 
 function normalizeDocumentType(value) {
@@ -452,7 +523,9 @@ function sortLedgerRows(rows) {
 
 function buildReportRows(rows, nameMap, documentLineDescriptionMap, documentFiscalNoMap, accountReportConfig) {
   return rows.map((row) => {
-    const amount = Number(row[accountReportConfig.amountField] ?? row.Amount ?? 0);
+    const amount = Number(row.Amount ?? 0);
+    const additionalCurrencyAmount = Number(row.Additional_Currency_Amount ?? 0);
+    const glLines = documentLineDescriptionMap.get(row.Document_No) || [];
 
     return {
       postingDate: row.Posting_Date || "",
@@ -460,17 +533,31 @@ function buildReportRows(rows, nameMap, documentLineDescriptionMap, documentFisc
       documentNo: row.Document_No || "",
       documentFiscalNo: documentFiscalNoMap.get(row.Document_No) || "",
       documentType: normalizeDocumentType(row.Document_Type),
-      glDescription: documentLineDescriptionMap.get(row.Document_No) || "",
+      glLines,
+      glDescription: glLines
+        .map((line) => {
+          const amountText = line.amountIncludingVat == null ? "" : ` (${formatLineAmount(line.amountIncludingVat)})`;
+          return `${line.description}${amountText}`;
+        })
+        .join(" | "),
       clientName: nameMap.get(row.Document_No) || "",
       amount,
+      additionalCurrencyAmount,
       amountTimes1_2: roundToTwo(amount * 1.2),
+      additionalCurrencyAmountTimes1_2: roundToTwo(additionalCurrencyAmount * 1.2),
     };
   });
 }
 
 function buildSummary(allReportRows, displayedRows) {
   const totalAmount = roundToTwo(allReportRows.reduce((sum, row) => sum + row.amount, 0));
+  const totalAdditionalCurrencyAmount = roundToTwo(
+    allReportRows.reduce((sum, row) => sum + row.additionalCurrencyAmount, 0)
+  );
   const totalAmountTimes1_2 = roundToTwo(allReportRows.reduce((sum, row) => sum + row.amountTimes1_2, 0));
+  const totalAdditionalCurrencyAmountTimes1_2 = roundToTwo(
+    allReportRows.reduce((sum, row) => sum + row.additionalCurrencyAmountTimes1_2, 0)
+  );
   const clientNames = [...new Set(allReportRows.map((row) => row.clientName).filter(Boolean))].sort();
 
   return {
@@ -478,15 +565,17 @@ function buildSummary(allReportRows, displayedRows) {
     displayedCount: displayedRows.length,
     matchedClients: clientNames,
     totalAmount,
+    totalAdditionalCurrencyAmount,
     totalAmountTimes1_2,
+    totalAdditionalCurrencyAmountTimes1_2,
   };
 }
 
 async function buildLedgerReportFromRows({ accountNo, clientSearch, from, to, top, ledgerRows, nameMap, signal }) {
   const accountReportConfig = getAccountReportConfig(accountNo);
   const sortedRows = sortLedgerRows(ledgerRows);
-  const documentNumbers = sortedRows.map((row) => row.Document_No);
-  const documentLineDescriptionMap = await fetchDocumentLineDescriptionMap(documentNumbers, signal);
+  const documentNumbers = sortedRows.map((row) => row.Document_No).filter(Boolean);
+  const documentLineDescriptionMap = await fetchDocumentLineDescriptionMap(documentNumbers, accountNo, signal);
   const documentFiscalNoMap = await fetchDocumentFiscalNoMap(documentNumbers, signal);
   const allReportRows = buildReportRows(
     sortedRows,
