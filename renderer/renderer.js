@@ -219,8 +219,8 @@ function renderRowsHtml(report) {
 function renderColumnGroupHtml(report) {
   const isEurAccount = String(report.accountNo || "") === "4091";
   const widths = isEurAccount
-    ? ["6%", "6%", "7%", "6%", "5%", "21%", "8%", "8.5%", "8.5%", "12%", "12%"]
-    : ["6%", "7%", "7%", "6%", "5%", "29%", "10%", "15%", "15%"];
+    ? ["5.5%", "6%", "6.5%", "5.5%", "4.5%", "24%", "8%", "8%", "8%", "12%", "12%"]
+    : ["6%", "7%", "7%", "5.5%", "5%", "34%", "10.5%", "12.5%", "12.5%"];
 
   return `<colgroup>${widths.map((width) => `<col style="width: ${width}" />`).join("")}</colgroup>`;
 }

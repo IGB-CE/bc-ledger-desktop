@@ -447,13 +447,13 @@ table {
 
 .standard-ledger-table th,
 .standard-ledger-table td {
-  padding: 7px 6px;
-  font-size: 0.72rem;
-  line-height: 1.3;
+  padding: 8px 7px;
+  font-size: 0.74rem;
+  line-height: 1.35;
 }
 
 .standard-ledger-table th {
-  font-size: 0.6rem;
+  font-size: 0.62rem;
   letter-spacing: 0.035em;
   overflow-wrap: anywhere;
 }
@@ -524,15 +524,20 @@ th {
 
 .standard-ledger-table th,
 .standard-ledger-table td {
-  padding: 7px 6px;
-  font-size: 0.72rem;
-  line-height: 1.3;
+  padding: 8px 7px;
+  font-size: 0.74rem;
+  line-height: 1.35;
 }
 
 .standard-ledger-table th {
-  font-size: 0.6rem;
+  font-size: 0.62rem;
   letter-spacing: 0.035em;
   overflow-wrap: anywhere;
+}
+
+.standard-ledger-table td:not(.detail-cell),
+.wide-ledger-table td:not(.detail-cell) {
+  white-space: nowrap;
 }
 
 .standard-ledger-table .detail-cell {
@@ -550,13 +555,13 @@ th {
 
 .wide-ledger-table th,
 .wide-ledger-table td {
-  padding: 7px 6px;
-  font-size: 0.7rem;
-  line-height: 1.3;
+  padding: 8px 7px;
+  font-size: 0.72rem;
+  line-height: 1.35;
 }
 
 .wide-ledger-table th {
-  font-size: 0.58rem;
+  font-size: 0.6rem;
   letter-spacing: 0.03em;
 }
 
@@ -574,6 +579,7 @@ tbody tr:hover {
   text-align: right;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  padding-right: 10px;
 }
 
 .empty-state {
